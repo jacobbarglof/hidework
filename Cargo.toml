@@ -1,6 +1,10 @@
 [workspace]
-members = ["crates/hidework-core", "src-tauri"]
+members = ["crates/hidework-core", "crates/hidework-mcp", "src-tauri"]
 resolver = "2"
+
+# The simulator is far too slow unoptimised; keep it fast in dev builds and tests.
+[profile.dev.package.hidework-core]
+opt-level = 3
 
 [workspace.package]
 version = "0.1.0"

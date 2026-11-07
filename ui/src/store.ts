@@ -10,9 +10,11 @@ export type Sel =
   | { kind: "vertex"; piece: string; index: number }
   | { kind: "hole"; piece: string; id: string }
   | { kind: "fold"; piece: string; id: string }
-  | { kind: "join"; id: string };
+  | { kind: "join"; id: string }
+  | { kind: "material"; id: string };
 
-export type Tool = "select" | "hole" | "fold" | "join";
+export type Tool = "select" | "hole" | "fold" | "join" | "measure" | "rect" | "polygon";
+export type Mode = "pattern";
 
 export const state = {
   project: null as unknown as Project,
@@ -26,11 +28,16 @@ export const state = {
   dirty: false,
   joinPending: null as { piece: string; edge: number } | null,
   status: "",
+  mode: "pattern" as Mode,
+  wastePct: 25,
 };
 
 const undoStack: string[] = [];
 const redoStack: string[] = [];
 const listeners = new Set<() => void>();
+
+/** Hardware picked in the library, placed by the next Punch click. */
+export const placing = { hardware: null as null | { label: string; diameterMm: number; lengthMm: number } };
 
 export function subscribe(fn: () => void): void {
   listeners.add(fn);
@@ -60,7 +67,11 @@ export function edit(fn: (p: Project) => void): void {
   changed();
 }
 
+/** Bumped on every change, so panels can tell when cached reports are stale. */
+export let version = 0;
+
 export function changed(): void {
+  version++;
   recompute();
   notify();
 }
@@ -83,7 +94,11 @@ export function redo(): void {
   changed();
 }
 
+/** Bumped when a different project is opened (not on edits or undo). */
+export let generation = 0;
+
 export function setProject(p: Project, path: string | null): void {
+  generation++;
   state.project = p;
   state.filePath = path;
   state.dirty = false;
@@ -102,6 +117,10 @@ export function fixSelection(): void {
     if (!state.project.joins.some((j) => j.id === s.id)) state.sel = { kind: "none" };
     return;
   }
+  if (s.kind === "material") {
+    if (!state.project.materials.some((m) => m.id === s.id)) state.sel = { kind: "none" };
+    return;
+  }
   const p = piece(s.piece);
   if (!p) state.sel = { kind: "none" };
   else if ((s.kind === "edge" || s.kind === "vertex") && s.index >= p.vertices.length) state.sel = { kind: "piece", piece: p.id };
@@ -112,6 +131,13 @@ export function fixSelection(): void {
 let inflight = false;
 let again = false;
 let pageTimer: number | undefined;
+let idleWaiters: (() => void)[] = [];
+
+/** Resolves once the latest edit has been computed. */
+export function whenComputed(): Promise<void> {
+  if (!inflight && !again) return Promise.resolve();
+  return new Promise((r) => idleWaiters.push(r));
+}
 
 async function recompute(): Promise<void> {
   if (inflight) {
@@ -129,6 +155,10 @@ async function recompute(): Promise<void> {
   if (again) {
     again = false;
     void recompute();
+  } else {
+    const w = idleWaiters;
+    idleWaiters = [];
+    w.forEach((r) => r());
   }
   window.clearTimeout(pageTimer);
   pageTimer = window.setTimeout(async () => {
@@ -151,7 +181,7 @@ export function computedPiece(id: string): ComputedPiece | undefined {
 
 export function selectedPieceId(): string | null {
   const s = state.sel;
-  return s.kind === "none" || s.kind === "join" ? null : s.piece;
+  return s.kind === "none" || s.kind === "join" || s.kind === "material" ? null : s.piece;
 }
 
 export function uid(prefix: string): string {

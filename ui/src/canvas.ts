@@ -1,7 +1,8 @@
 // The drafting table: draws the pattern on parchment and handles mouse editing.
 
-import { computedPiece, edit, notify, piece, selectedPieceId, setStatus, snapshot, changed, state, subscribe, uid } from "./store";
-import { dist, edgePoints, insertVertex, midpoint, toDesign } from "./ops";
+import { computedPiece, edit, notify, piece, placing, selectedPieceId, setStatus, snapshot, changed, state, subscribe, uid } from "./store";
+import { canvasPng } from "./dom";
+import { dist, edgePoints, insertVertex, midpoint, rectPiece, toDesign } from "./ops";
 import { snapStep } from "./units";
 import type { ComputedPiece, Piece, V } from "./types";
 
@@ -25,6 +26,138 @@ type Drag =
   | { kind: "hole"; id: string; hid: string; start: V; orig: V; moved: boolean }
   | { kind: "fold"; id: string; fid: string; start: V; orig: number; moved: boolean };
 let drag: Drag | null = null;
+let measure: { a: V; b: V; active: boolean } | null = null;
+let drawRect: { a: V; b: V } | null = null;
+let poly: V[] = [];
+
+function snapPoint(w: V, e: MouseEvent): V {
+  return { x: snap(w.x, e), y: snap(w.y, e) };
+}
+
+function finishPolygon(): void {
+  if (poly.length < 3) {
+    poly = [];
+    requestDraw();
+    return;
+  }
+  const minX = Math.min(...poly.map((p) => p.x));
+  const minY = Math.min(...poly.map((p) => p.y));
+  const pc = rectPiece({ x: minX, y: minY }, 1, 1, "Panel");
+  pc.vertices = poly.map((p) => ({ x: p.x - minX, y: p.y - minY }));
+  pc.edges = poly.map(() => ({ type: "line", stitched: false }));
+  poly = [];
+  edit((p) => p.pieces.push(pc));
+  state.sel = { kind: "piece", piece: pc.id };
+  state.tool = "select";
+  setStatus("Polygon piece added. Double-click edges to add points; drag points to shape it.");
+}
+
+export function cancelDrawing(): void {
+  poly = [];
+  drawRect = null;
+  requestDraw();
+}
+
+function drawPending(): void {
+  ctx.strokeStyle = OXBLOOD;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([5, 3]);
+  if (drawRect) {
+    const a = toScreen(drawRect.a);
+    const b = toScreen(drawRect.b);
+    ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+    const w = Math.abs(drawRect.b.x - drawRect.a.x);
+    const hgt = Math.abs(drawRect.b.y - drawRect.a.y);
+    ctx.fillStyle = OXBLOOD;
+    ctx.font = "600 13px 'EB Garamond', serif";
+    ctx.fillText(`${w.toFixed(1)} × ${hgt.toFixed(1)} mm`, Math.max(a.x, b.x) + 6, Math.max(a.y, b.y) + 14);
+  }
+  if (poly.length) {
+    ctx.beginPath();
+    poly.forEach((p, i) => {
+      const s = toScreen(p);
+      if (i === 0) ctx.moveTo(s.x, s.y);
+      else ctx.lineTo(s.x, s.y);
+    });
+    if (hoverWorld) {
+      const s = toScreen(hoverWorld);
+      ctx.lineTo(s.x, s.y);
+    }
+    ctx.stroke();
+    for (const p of poly) {
+      const s = toScreen(p);
+      ctx.fillStyle = GOLD;
+      ctx.fillRect(s.x - 3, s.y - 3, 6, 6);
+    }
+  }
+  ctx.setLineDash([]);
+}
+
+/** PNG of the pattern canvas (base64, no data: prefix). */
+export function captureCanvas(): string {
+  draw();
+  return canvasPng(cv);
+}
+
+export function zoomBy(factor: number): void {
+  const r = cv.getBoundingClientRect();
+  const before = toWorld(r.width / 2, r.height / 2);
+  view.scale = Math.min(60, Math.max(0.2, view.scale * factor));
+  view.ox = r.width / 2 - before.x * view.scale;
+  view.oy = r.height / 2 - before.y * view.scale;
+  requestDraw();
+}
+
+/** Nearest corner or stitch hole within a few pixels, for measuring. */
+function snapToFeature(w: V): V {
+  let best = w;
+  let bestD = 9 / view.scale;
+  for (const pc of state.project.pieces) {
+    const cp = computedPiece(pc.id);
+    if (!cp) continue;
+    const pts = [...cp.vertices, ...cp.stitchRuns.flatMap((r) => r.holes), ...cp.holes.map((h) => h.center)];
+    for (const p of pts) {
+      const q = addV(p, pc.position);
+      const d = dist(q, w);
+      if (d < bestD) [best, bestD] = [q, d];
+    }
+  }
+  return best;
+}
+
+function drawMeasure(): void {
+  if (!measure) return;
+  const a = toScreen(measure.a);
+  const b = toScreen(measure.b);
+  ctx.strokeStyle = OXBLOOD;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6, 3]);
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y);
+  ctx.lineTo(b.x, b.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  for (const p of [a, b]) {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = OXBLOOD;
+    ctx.fill();
+  }
+  const d = dist(measure.a, measure.b);
+  const inch = state.project.units === "in";
+  const txt = inch ? `${(d / 25.4).toFixed(3)} in` : `${d.toFixed(1)} mm`;
+  ctx.font = "600 14px 'EB Garamond', serif";
+  const tw = ctx.measureText(txt).width;
+  const mx = (a.x + b.x) / 2 + 8;
+  const my = (a.y + b.y) / 2 - 8;
+  ctx.fillStyle = "rgba(246,236,211,0.92)";
+  ctx.fillRect(mx - 4, my - 14, tw + 8, 20);
+  ctx.strokeStyle = OXBLOOD;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(mx - 4, my - 14, tw + 8, 20);
+  ctx.fillStyle = OXBLOOD;
+  ctx.fillText(txt, mx, my);
+}
 
 const toScreen = (p: V): V => ({ x: view.ox + p.x * view.scale, y: view.oy + p.y * view.scale });
 const toWorld = (sx: number, sy: number): V => ({ x: (sx - view.ox) / view.scale, y: (sy - view.oy) / view.scale });
@@ -208,13 +341,35 @@ function drawPiece(pc: Piece, cp: ComputedPiece, selected: boolean): void {
       ctx.fillText(`fold  +${f.shiftMm.toFixed(1)} mm`, p.x + 8, p.y - 5);
     }
   }
-  // Punched holes.
+  // Skive zones.
+  for (const line of cp.skive ?? []) {
+    path(line, off, false);
+    ctx.setLineDash([4, 3]);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(122,31,26,0.75)";
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  // Punched holes and slots.
   for (const h of cp.holes) {
     const p = toScreen(addV(h.center, off));
     const sel = state.sel.kind === "hole" && state.sel.id === h.id;
     const r = Math.max(3, (h.diameterMm / 2) * s);
     ctx.strokeStyle = sel ? OXBLOOD : INK;
     ctx.lineWidth = sel ? 2 : 1.2;
+    if ((h.lengthMm ?? 0) > h.diameterMm) {
+      const half = (((h.lengthMm ?? 0) - h.diameterMm) / 2) * s;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(((h.angleDeg ?? 0) * Math.PI) / 180);
+      ctx.beginPath();
+      ctx.arc(half, 0, r, -Math.PI / 2, Math.PI / 2);
+      ctx.arc(-half, 0, r, Math.PI / 2, (3 * Math.PI) / 2);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.restore();
+      continue;
+    }
     ctx.beginPath();
     ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
     ctx.moveTo(p.x - r - 4, p.y);
@@ -382,6 +537,8 @@ function draw(): void {
     if (pc && cp) drawSelection(pc, cp);
   }
   drawFoldPreview();
+  drawMeasure();
+  drawPending();
   drawScaleBar(w, h);
 }
 
@@ -514,6 +671,24 @@ function onDown(e: MouseEvent): void {
     return;
   }
   if (e.button !== 0) return;
+  if (state.tool === "rect") {
+    const p = snapPoint(w, e);
+    drawRect = { a: p, b: p };
+    return;
+  }
+  if (state.tool === "polygon") {
+    const p = snapPoint(w, e);
+    if (poly.length >= 3 && dist(p, poly[0]) * view.scale < 10) finishPolygon();
+    else poly.push(p);
+    requestDraw();
+    return;
+  }
+  if (state.tool === "measure") {
+    const p = snapToFeature(w);
+    measure = { a: p, b: p, active: true };
+    requestDraw();
+    return;
+  }
   if (state.tool === "hole" || state.tool === "fold") {
     const id = hitPiece(w);
     if (!id) return;
@@ -521,7 +696,8 @@ function onDown(e: MouseEvent): void {
     const d = toDesign(computedPiece(id), { x: w.x - pc.position.x, y: w.y - pc.position.y });
     if (state.tool === "hole") {
       const hid = uid("h");
-      edit(() => pc.holes.push({ id: hid, center: { x: snap(d.x, e), y: snap(d.y, e) }, diameterMm: 3, label: "" }));
+      const hw = placing.hardware;
+      edit(() => pc.holes.push({ id: hid, center: { x: snap(d.x, e), y: snap(d.y, e) }, diameterMm: hw?.diameterMm ?? 3, label: hw?.label ?? "", lengthMm: hw?.lengthMm ?? 0, angleDeg: 0 }));
       state.sel = { kind: "hole", piece: id, id: hid };
     } else {
       const fid = uid("f");
@@ -607,6 +783,20 @@ function onMove(e: MouseEvent): void {
   const r = cv.getBoundingClientRect();
   const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
   const w = eventWorld(e);
+  if (measure?.active) {
+    measure.b = e.shiftKey ? w : snapToFeature(w);
+    requestDraw();
+    return;
+  }
+  if (drawRect) {
+    drawRect.b = snapPoint(w, e);
+    requestDraw();
+    return;
+  }
+  if (state.tool === "polygon" && poly.length) {
+    hoverWorld = w;
+    requestDraw();
+  }
   if (!drag) {
     hoverWorld = inside ? w : null;
     const prev = hover;
@@ -665,9 +855,36 @@ function onMove(e: MouseEvent): void {
 
 function onUp(): void {
   drag = null;
+  if (drawRect) {
+    const r = drawRect;
+    drawRect = null;
+    const w = Math.abs(r.b.x - r.a.x);
+    const hgt = Math.abs(r.b.y - r.a.y);
+    if (w > 2 && hgt > 2) {
+      const pc = rectPiece({ x: Math.min(r.a.x, r.b.x), y: Math.min(r.a.y, r.b.y) }, w, hgt, "Panel");
+      edit((p) => p.pieces.push(pc));
+      state.sel = { kind: "piece", piece: pc.id };
+      setStatus(`Added a ${w.toFixed(1)} × ${hgt.toFixed(1)} mm panel.`);
+    }
+    requestDraw();
+  }
+  if (measure?.active) {
+    measure.active = false;
+    const d = dist(measure.a, measure.b);
+    setStatus(`Measured ${d.toFixed(1)} mm (${(d / 25.4).toFixed(3)} in). Drag again to measure something else.`);
+  }
+}
+
+export function clearMeasure(): void {
+  measure = null;
+  requestDraw();
 }
 
 function onDouble(e: MouseEvent): void {
+  if (state.tool === "polygon") {
+    finishPolygon();
+    return;
+  }
   const id = selectedPieceId();
   if (!id || state.tool !== "select") return;
   const w = eventWorld(e);

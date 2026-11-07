@@ -1,0 +1,9 @@
+[package]
+name = "hidework-mcp"
+description = "MCP server that lets AI agents drive the Hidework desktop app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde_json = "1"

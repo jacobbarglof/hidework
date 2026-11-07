@@ -1,11 +1,16 @@
-// The side panels: the piece and material ledger on the left, the inspector on the right.
+// Property editor (right dock, lower half): edits whatever is selected in the browser, the 2D
+// window or the 3D window. Also the strap builder and the fabric-test bench controls.
 
-import { button, check, choose, field, h, num, rerender, text } from "./dom";
-import { deleteVertex, duplicatePiece, rectPiece, roundedRectPiece, toggleCurve } from "./ops";
-import { computedPiece, edit, notify, piece, state, uid } from "./store";
-import { fmtLen, fmtThickness, fromDisp, OZ_MM, round, toDisp } from "./units";
+import { api } from "./api";
 import { viewCenter } from "./canvas";
-import type { Material, MaterialKind, Piece } from "./types";
+import { button, check, choose, field, h, num, rerender, text } from "./dom";
+import { defaultsFor, drape, loadPresets, maxFrame, replay, runDrape, scrub } from "./drape";
+import { deleteVertex, duplicatePiece, mirrorPiece, rotatePiece, toggleCurve } from "./ops";
+import { computedPiece, edit, notify, piece, setStatus, state, uid, version } from "./store";
+import { colorFor } from "./textures";
+import { fmtLen, fmtThickness, fromDisp, OZ_MM, round, toDisp } from "./units";
+import { sim3d } from "./view3d";
+import type { Bom, Material, MaterialKind, MaterialStats, Physics, Piece, Scene, Side, StrapParams } from "./types";
 
 const KINDS: [MaterialKind, string][] = [
   ["leather", "Leather"],
@@ -13,8 +18,44 @@ const KINDS: [MaterialKind, string][] = [
   ["other", "Other"],
 ];
 const PITCHES = [2.7, 3, 3.38, 3.85, 4, 5, 6];
+const PUNCH_SIZES = [1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 6, 8, 10];
+const DEFAULT_PHYSICS: Physics = { densityKgM3: 900, bendingModulusMpa: 20, tensileModulusMpa: 80, anisotropy: 0.85, biasStiffness: 0.9, friction: 0.6, tensileStrengthMpa: 20 };
 
-function heading(title: string, extra?: Node): HTMLElement {
+export const panel = { special: null as null | "strap" };
+
+const strapForm: StrapParams = {
+  name: "Strap",
+  lengthMm: 1000,
+  widthMm: 38,
+  tip: "round",
+  holes: 5,
+  holeSpacingMm: 25,
+  firstHoleMm: 90,
+  holeMm: 4,
+  buckleEnd: true,
+  buckleFoldMm: 70,
+  tongueSlotMm: 20,
+  rivetMm: 3,
+  stitched: false,
+};
+
+/** Reports fetched from the core, refreshed when the project changes. */
+export const reports = { version: -1, stats: [] as MaterialStats[], bom: null as Bom | null, waste: -1, loading: false };
+
+export function refreshReports(): void {
+  if (reports.loading || (reports.version === version && reports.waste === state.wastePct)) return;
+  reports.loading = true;
+  const v = version;
+  Promise.all([api.materialStats(state.project), api.bom(state.project, state.wastePct)])
+    .then(([stats, bom]) => Object.assign(reports, { stats, bom, version: v, waste: state.wastePct }))
+    .catch(() => {})
+    .finally(() => {
+      reports.loading = false;
+      notify();
+    });
+}
+
+export function heading(title: string, extra?: Node): HTMLElement {
   return h("div", { class: "section-head" }, h("h2", {}, title), extra ?? null);
 }
 
@@ -25,97 +66,38 @@ function len(key: string, mm: number, commit: (mm: number) => void, min?: number
 
 const unitLabel = () => (state.project.units === "in" ? "in" : "mm");
 
-// ---------- left ledger ----------
+export const select = (sel: typeof state.sel) => () => {
+  state.sel = sel;
+  panel.special = null;
+  notify();
+};
 
-export function renderLedger(el: HTMLElement): void {
-  rerender(el, () => [piecesSection(), materialsSection()]);
+export function seamName(r: { pieceId: string; edges: number[] }): string {
+  return `${piece(r.pieceId)?.name ?? "?"} edge ${r.edges.map((e) => e + 1).join("+")}`;
 }
 
-function piecesSection(): HTMLElement {
-  const add = (make: () => Piece) => () => {
-    const pc = make();
-    edit((p) => p.pieces.push(pc));
-    state.sel = { kind: "piece", piece: pc.id };
-    notify();
-  };
-  const at = () => {
-    const c = viewCenter();
-    return { x: Math.round(c.x - 40), y: Math.round(c.y - 25) };
-  };
-  const list = h("ul", { class: "ledger-list" });
-  for (const pc of state.project.pieces) {
-    const selected = state.sel.kind !== "none" && state.sel.kind !== "join" && state.sel.piece === pc.id;
-    list.append(
-      h(
-        "li",
-        { class: selected ? "selected" : "", onclick: () => { state.sel = { kind: "piece", piece: pc.id }; notify(); } },
-        h("span", { class: "li-name" }, pc.name),
-        h("span", { class: "li-meta" }, `×${pc.cutCount}`),
-      ),
-    );
-  }
-  if (!state.project.pieces.length) list.append(h("li", { class: "empty" }, "No pieces yet."));
-  return h(
-    "section",
-    { class: "panel-section" },
-    heading("Pieces"),
-    list,
-    h(
-      "div",
-      { class: "btn-row" },
-      button("Rectangle", add(() => rectPiece(at(), 80, 50, "New panel"))),
-      button("Rounded", add(() => roundedRectPiece(at(), 80, 50, 6, "New panel"))),
-    ),
-  );
+function round2(v: number): number {
+  return Math.round(v * 100) / 100;
 }
 
-function materialsSection(): HTMLElement {
-  const rows = state.project.materials.map((m, i) => materialRow(m, i));
-  return h(
-    "section",
-    { class: "panel-section" },
-    heading("Materials"),
-    ...rows,
-    h(
-      "div",
-      { class: "btn-row" },
-      button("Add material", () =>
-        edit((p) => p.materials.push({ id: uid("m"), name: "New leather", kind: "leather", thicknessMm: 4 * OZ_MM })),
-      ),
-    ),
-  );
+function metric(label: string, value: string, big = false): HTMLElement {
+  return h("div", { class: `metric${big ? " big" : ""}` }, h("span", {}, label), h("b", {}, value));
 }
 
-function materialRow(m: Material, i: number): HTMLElement {
-  const used = state.project.pieces.some((p) => p.materialId === m.id);
-  const set = (fn: (x: Material) => void) => edit((p) => fn(p.materials[i]));
-  return h(
-    "div",
-    { class: "material" },
-    text(`mat-name-${m.id}`, m.name, (v) => set((x) => (x.name = v))),
-    h(
-      "div",
-      { class: "material-grid" },
-      field("Kind", choose(`mat-kind-${m.id}`, KINDS, m.kind, (v) => set((x) => (x.kind = v)))),
-      field("Thickness, mm", num(`mat-mm-${m.id}`, Math.round(m.thicknessMm * 100) / 100, (v) => set((x) => (x.thicknessMm = Math.max(0.05, v))), { step: 0.05, min: 0.05 })),
-      field("Ounces", num(`mat-oz-${m.id}`, Math.round((m.thicknessMm / OZ_MM) * 10) / 10, (v) => set((x) => (x.thicknessMm = Math.max(0.05, v * OZ_MM))), { step: 0.5, min: 0.5 })),
-    ),
-    used || state.project.materials.length === 1
-      ? null
-      : h("div", { class: "btn-row" }, button("Remove", () => edit((p) => p.materials.splice(i, 1)), "quiet")),
-  );
-}
-
-// ---------- right inspector ----------
+// ---------- property editor ----------
 
 export function renderInspector(el: HTMLElement): void {
+  refreshReports();
   rerender(el, () => {
+    if (panel.special === "strap") return strapInspector();
     const s = state.sel;
     switch (s.kind) {
       case "none":
         return projectInspector();
       case "join":
         return joinInspector(s.id);
+      case "material":
+        return materialInspector(s.id);
       case "piece":
         return pieceInspector(s.piece);
       case "edge":
@@ -131,47 +113,65 @@ export function renderInspector(el: HTMLElement): void {
 }
 
 function back(pieceId: string): HTMLElement {
-  return h("a", { class: "back", href: "#", onclick: (e: Event) => { e.preventDefault(); state.sel = { kind: "piece", piece: pieceId }; notify(); } }, "‹ Back to piece");
+  return h("a", { class: "back", href: "#", onclick: (e: Event) => { e.preventDefault(); select({ kind: "piece", piece: pieceId })(); } }, "‹ Piece");
+}
+
+/** The simulation readout, shown with the project. */
+export function simReadout(): Node[] {
+  const st = sim3d.status;
+  if (!st || !sim3d.info) return [h("p", { class: "hint" }, "Press Simulate (Space) to see how the piece holds up. Pin it, hang weights or drop objects in from the library.")];
+  const m = st.metrics;
+  const out: Node[] = [
+    metric("Load carried", `${(m.loadG / 1000).toFixed(2)} kg`),
+    metric("Leather weight", `${m.clothG.toFixed(0)} g`),
+    metric("Peak stitch load", `${m.maxStitchN.toFixed(1)} N of ${m.stitchCapacityN.toFixed(0)} N`),
+    metric("Peak pull at a pin", m.maxPinN > 0 ? `${m.maxPinN.toFixed(1)} N of ${m.pinCapacityN.toFixed(0)} N` : "no pins"),
+    metric("Peak panel stress", `${m.maxStressMpa.toFixed(2)} MPa of ${m.panelStrengthMpa.toFixed(0)}`),
+    metric("Largest movement", `${m.sagMm.toFixed(1)} mm`),
+    metric("Estimated capacity", m.capacityKg !== null ? `${m.capacityKg.toFixed(1)} kg` : "—", true),
+  ];
+  out.push(h("p", { class: "hint" }, m.capacityKg !== null ? `Limited by ${m.limitedBy}, with a safety factor of 2. Strengths are estimates until calibrated.` : `Capacity: ${m.limitedBy}.`));
+  out.push(h("p", { class: "stat-line" }, `${sim3d.info.seams} seam${sim3d.info.seams === 1 ? "" : "s"} sewn · ${sim3d.info.fasteners} rivet/snap fastening${sim3d.info.fasteners === 1 ? "" : "s"} · ${m.settled ? "settled" : `t = ${m.timeS.toFixed(1)} s`}`));
+  for (const w of sim3d.info.warnings) out.push(h("p", { class: "warn" }, w));
+  return out;
 }
 
 function projectInspector(): Node[] {
   const p = state.project;
-  const joins = state.computed?.joins ?? [];
   const out: Node[] = [
     heading("Project"),
     field("Name", text("proj-name", p.name, (v) => edit((x) => (x.name = v)))),
-    field("Units", choose("proj-units", [["mm", "Millimetres"], ["in", "Inches"]], p.units, (v) => edit((x) => (x.units = v)))),
-    heading("Seams"),
+    h(
+      "div",
+      { class: "grid2" },
+      field("Units", choose("proj-units", [["mm", "Millimetres"], ["in", "Inches"]], p.units, (v) => edit((x) => (x.units = v)))),
+      field("Thread colour", (() => {
+        const i = h("input", { type: "color", value: p.threadColor ?? "#efe4c8", "data-key": "thread" });
+        i.addEventListener("change", () => edit((x) => (x.threadColor = i.value)));
+        return i;
+      })()),
+    ),
+    heading("Simulation"),
+    ...simReadout(),
+    heading("Materials & cost"),
+    field("Cutting waste, %", num("waste", state.wastePct, (v) => { state.wastePct = Math.max(0, v); notify(); }, { step: 5, min: 0 })),
   ];
-  if (!p.joins.length) out.push(h("p", { class: "hint" }, "Use Join (J) to pair two edges that sew together. Hidework checks they match."));
-  for (const j of p.joins) {
-    const rep = joins.find((r) => r.id === j.id);
-    out.push(
-      h(
-        "div",
-        { class: `seam ${rep?.ok ? "ok" : "bad"}`, onclick: () => { state.sel = { kind: "join", id: j.id }; notify(); } },
-        h("strong", {}, `${seamName(j.a)} ↔ ${seamName(j.b)}`),
-        h("span", {}, rep?.message ?? "…"),
-      ),
-    );
+  const bom = reports.bom;
+  if (bom) {
+    const t = h("table", { class: "report" }, h("tr", {}, h("th", {}, "Material"), h("th", {}, "Area"), h("th", {}, "Buy"), h("th", {}, "Cost")));
+    for (const m of bom.materials) {
+      t.append(h("tr", {}, h("td", {}, m.name), h("td", {}, `${m.sqft.toFixed(2)} ft²`), h("td", {}, `${m.sqftWithWaste.toFixed(2)} ft²`), h("td", {}, m.cost !== null ? `$${m.cost.toFixed(2)}` : "—")));
+    }
+    out.push(t, h("p", { class: "stat-line" }, `Seams ${fmtLen(bom.seamMm, p.units)} · ${bom.stitchHoles} holes · ~${bom.threadM.toFixed(1)} m thread (4× seam)`));
+    if (bom.totalCost !== null) out.push(metric("Leather cost with waste", `$${bom.totalCost.toFixed(2)}`, true));
+    if (bom.hardware.length) {
+      const hw = h("table", { class: "report" }, h("tr", {}, h("th", {}, "Hardware / punch"), h("th", {}, "Size"), h("th", {}, "Qty")));
+      for (const x of bom.hardware) hw.append(h("tr", {}, h("td", {}, x.label), h("td", {}, x.slotMm > x.diameterMm ? `${x.diameterMm}×${x.slotMm} slot` : `${x.diameterMm} mm`), h("td", {}, String(x.count))));
+      out.push(hw);
+    }
   }
   for (const w of state.computed?.warnings ?? []) out.push(h("p", { class: "warn" }, w));
-  out.push(
-    heading("How to"),
-    h(
-      "ul",
-      { class: "help" },
-      h("li", {}, "Click a piece to select it; drag to move it."),
-      h("li", {}, "Click an edge of the selected piece to stitch it or curve it."),
-      h("li", {}, "Double-click an edge to add a corner; Delete removes one."),
-      h("li", {}, "Scroll to zoom; right-drag or Space-drag to pan; Alt turns off snapping."),
-    ),
-  );
   return out;
-}
-
-function seamName(r: { pieceId: string; edges: number[] }): string {
-  return `${piece(r.pieceId)?.name ?? "?"} edge ${r.edges.map((e) => e + 1).join("+")}`;
 }
 
 function joinInspector(id: string): Node[] {
@@ -192,9 +192,78 @@ function joinInspector(id: string): Node[] {
           h("tr", {}, h("td", {}, "Holes"), h("td", {}, String(rep.aHoles)), h("td", {}, String(rep.bHoles))),
         )
       : null,
-    h("div", { class: "btn-row" }, button("Remove seam", () => { edit((p) => (p.joins = p.joins.filter((x) => x.id !== id))); state.sel = { kind: "none" }; notify(); }, "quiet")),
+    h("p", { class: "hint" }, "In 3D, this seam is sewn: its stitch holes are tied together when you simulate."),
+    h("div", { class: "btn-row" }, button("Remove seam", () => { edit((p) => (p.joins = p.joins.filter((x) => x.id !== id))); state.sel = { kind: "none" }; notify(); }, "danger")),
   ];
 }
+
+// ---------- fabric property editor (CLO's "Property Editor" for a fabric) ----------
+
+function materialInspector(id: string): Node[] {
+  const i = state.project.materials.findIndex((m) => m.id === id);
+  const m = state.project.materials[i];
+  if (!m) return [];
+  const set = (fn: (x: Material) => void) => edit((p) => fn(p.materials[i]));
+  const stats = reports.stats.find((s) => s.id === m.id);
+  const ph: Physics = { ...DEFAULT_PHYSICS, ...(stats?.physics ?? m.physics ?? {}) };
+  const setPh = (k: keyof Physics) => (v: number) => set((x) => (x.physics = { ...ph, [k]: v }));
+  const used = state.project.pieces.filter((p) => p.materialId === m.id).length;
+  const color = h("input", { type: "color", value: m.color ?? colorFor(m.kind, m.name), "data-key": `mat-color-${m.id}` });
+  color.addEventListener("change", () => set((x) => (x.color = color.value)));
+  const cal = num(`cal-${m.id}`, 0, () => {}, { step: 1, min: 0 });
+  cal.placeholder = "overhang mm";
+  return <Node[]>[
+    heading("Fabric"),
+    field("Name", text(`mat-name-${m.id}`, m.name, (v) => set((x) => (x.name = v)))),
+    h(
+      "div",
+      { class: "grid2" },
+      field("Type", choose(`mat-kind-${m.id}`, KINDS, m.kind, (v) => set((x) => (x.kind = v)))),
+      field("Colour", color),
+      field("Thickness, mm", num(`mat-mm-${m.id}`, round2(m.thicknessMm), (v) => set((x) => (x.thicknessMm = Math.max(0.05, v))), { step: 0.05, min: 0.05 })),
+      field("Weight, oz", num(`mat-oz-${m.id}`, Math.round((m.thicknessMm / OZ_MM) * 10) / 10, (v) => set((x) => (x.thicknessMm = Math.max(0.05, v * OZ_MM))), { step: 0.5, min: 0.5 })),
+      field("Price per ft²", num(`mat-cost-${m.id}`, m.costPerSqft ?? 0, (v) => set((x) => (x.costPerSqft = v > 0 ? v : null)), { step: 0.25, min: 0 })),
+    ),
+    stats ? h("p", { class: "stat-line" }, `Bending length ${stats.bendingLengthMm.toFixed(0)} mm · ${stats.gramsPerM2.toFixed(0)} g/m² (${stats.ozPerYd2.toFixed(1)} oz/yd²) · used by ${used} piece${used === 1 ? "" : "s"}`) : null,
+    heading("Physical properties"),
+    h(
+      "div",
+      { class: "physics" },
+      h(
+        "div",
+        { class: "grid2" },
+        field("Density, kg/m³", num(`ph-d-${m.id}`, ph.densityKgM3, setPh("densityKgM3"), { step: 10, min: 50 })),
+        field("Bending, MPa", num(`ph-b-${m.id}`, round2(ph.bendingModulusMpa), setPh("bendingModulusMpa"), { step: 0.5, min: 0.05 })),
+        field("Stretch, MPa", num(`ph-t-${m.id}`, ph.tensileModulusMpa, setPh("tensileModulusMpa"), { step: 5, min: 1 })),
+        field("Strength, MPa", num(`ph-u-${m.id}`, ph.tensileStrengthMpa ?? 20, setPh("tensileStrengthMpa"), { step: 1, min: 1 })),
+        field("Bend across ÷ along", num(`ph-a-${m.id}`, ph.anisotropy, setPh("anisotropy"), { step: 0.05, min: 0.05 })),
+        field("Bias stiffness", num(`ph-s-${m.id}`, ph.biasStiffness, setPh("biasStiffness"), { step: 0.05, min: 0.05, max: 1 })),
+        field("Friction", num(`ph-f-${m.id}`, ph.friction, setPh("friction"), { step: 0.05, min: 0, max: 1 })),
+      ),
+      h("p", { class: "hint" }, "Library values are starting estimates. Calibrate bending with a strip test: slide a 25 mm strip off a table until its tip touches a 41.5° line, then enter the overhang."),
+      h(
+        "div",
+        { class: "btn-row" },
+        cal,
+        button("Calibrate", async () => {
+          const overhang = parseFloat(cal.value);
+          if (!(overhang > 0)) return setStatus("Enter the strip's overhang in millimetres first.");
+          const e = await api.calibrate(m.thicknessMm, ph.densityKgM3, overhang);
+          set((x) => (x.physics = { ...ph, bendingModulusMpa: e }));
+          setStatus(`${m.name}: bending modulus ${e.toFixed(2)} MPa from a ${overhang} mm overhang.`);
+        }),
+      ),
+    ),
+    h(
+      "div",
+      { class: "btn-row spaced" },
+      button("Fabric test…", () => openFabricTest(m.id), "primary"),
+      used ? null : button("Delete fabric", () => { edit((p) => p.materials.splice(i, 1)); state.sel = { kind: "none" }; notify(); }, "danger"),
+    ),
+  ];
+}
+
+// ---------- pattern pieces ----------
 
 function pieceInspector(id: string): Node[] {
   const pc = piece(id);
@@ -204,42 +273,69 @@ function pieceInspector(id: string): Node[] {
   const set = (fn: (x: Piece) => void) => edit(() => fn(pc));
   const matOptions = state.project.materials.map((m) => [m.id, `${m.name}, ${fmtThickness(m.thicknessMm)}`] as [string, string]);
   const out: Node[] = [
-    heading("Piece"),
+    heading("Pattern piece"),
     field("Name", text("pc-name", pc.name, (v) => set((x) => (x.name = v)))),
-    field("Material", choose("pc-mat", matOptions, pc.materialId, (v) => set((x) => (x.materialId = v)))),
+    field("Fabric", choose("pc-mat", matOptions, pc.materialId, (v) => set((x) => (x.materialId = v)))),
     h(
       "div",
-      { class: "grid2" },
-      field("Cut", num("pc-cut", pc.cutCount, (v) => set((x) => (x.cutCount = Math.max(1, Math.round(v)))), { step: 1, min: 1 })),
-      field("Grain, degrees", num("pc-grain", pc.grainDeg, (v) => set((x) => (x.grainDeg = v)), { step: 15 })),
-      field(`Seam allowance, ${unitLabel()}`, len("pc-sa", pc.seamAllowanceMm, (v) => set((x) => (x.seamAllowanceMm = Math.max(0, v))), 0)),
+      { class: "grid3" },
+      field("Cut ×", num("pc-cut", pc.cutCount, (v) => set((x) => (x.cutCount = Math.max(1, Math.round(v)))), { step: 1, min: 1 })),
+      field("Grain °", num("pc-grain", pc.grainDeg, (v) => set((x) => (x.grainDeg = v)), { step: 15 })),
+      field(`Allowance`, len("pc-sa", pc.seamAllowanceMm, (v) => set((x) => (x.seamAllowanceMm = Math.max(0, v))), 0)),
+      field(`X, ${unitLabel()}`, len("pc-x", pc.position.x, (v) => set((x) => (x.position.x = v)))),
+      field(`Y, ${unitLabel()}`, len("pc-y", pc.position.y, (v) => set((x) => (x.position.y = v)))),
+    ),
+    field("Notes printed on the template", (() => {
+      const t = h("textarea", { rows: 2, "data-key": "pc-notes", onchange: (e: Event) => set((x) => (x.notes = (e.target as HTMLTextAreaElement).value)) });
+      t.value = pc.notes ?? "";
+      return t;
+    })()),
+    h(
+      "div",
+      { class: "btn-row" },
+      button("Mirror", () => set((x) => mirrorPiece(x, "x")), "quiet"),
+      button("Flip", () => set((x) => mirrorPiece(x, "y")), "quiet"),
+      button("Rotate", () => set((x) => rotatePiece(x, true)), "quiet"),
+      button("Duplicate", () => {
+        const copy = duplicatePiece(pc);
+        edit((p) => p.pieces.push(copy));
+        state.sel = { kind: "piece", piece: copy.id };
+        notify();
+      }, "quiet"),
+      button("Lining", async () => {
+        const lid = uid("p");
+        const lining = await api.lining(state.project, id, 2, lid);
+        edit((p) => p.pieces.push(lining));
+        state.sel = { kind: "piece", piece: lid };
+        setStatus("Lining made 2 mm inside the outline.");
+      }, "quiet"),
     ),
     heading("Stitching"),
     h(
       "div",
-      { class: "grid2" },
-      field(`From edge, ${unitLabel()}`, len("st-margin", pc.stitch.marginMm, (v) => set((x) => (x.stitch.marginMm = Math.max(0.5, v))), 0.5)),
-      field("Iron spacing, mm", (() => {
+      { class: "grid3" },
+      field(`From edge`, len("st-margin", pc.stitch.marginMm, (v) => set((x) => (x.stitch.marginMm = Math.max(0.5, v))), 0.5)),
+      field("Iron, mm", (() => {
         const i = num("st-pitch", pc.stitch.pitchMm, (v) => set((x) => (x.stitch.pitchMm = Math.max(1, v))), { step: 0.01, min: 1 });
         i.setAttribute("list", "pitches");
         return i;
       })()),
-      field("Hole mark, mm", num("st-hole", pc.stitch.holeMm, (v) => set((x) => (x.stitch.holeMm = Math.max(0.2, v))), { step: 0.1, min: 0.2 })),
+      field("Hole, mm", num("st-hole", pc.stitch.holeMm, (v) => set((x) => (x.stitch.holeMm = Math.max(0.2, v))), { step: 0.1, min: 0.2 })),
     ),
     h("datalist", { id: "pitches" }, ...PITCHES.map((p) => h("option", { value: String(p) }))),
-    heading("Edges"),
   ];
-  const table = h("table", { class: "report edges" }, h("tr", {}, h("th", {}, "#"), h("th", {}, "Stitch"), h("th", {}, "Length"), h("th", {}, "Holes")));
+  const table = h("table", { class: "report edges" }, h("tr", {}, h("th", {}, "Edge"), h("th", {}, "Stitch"), h("th", {}, "Length"), h("th", {}, "Holes"), h("th", {}, "Skive")));
   pc.edges.forEach((e, i) => {
     const rep = cp?.edges[i];
     table.append(
       h(
         "tr",
         { class: "clickable" },
-        h("td", { onclick: () => { state.sel = { kind: "edge", piece: id, index: i }; notify(); } }, `${i + 1}${e.type === "cubic" ? " ⌒" : ""}`),
+        h("td", { onclick: select({ kind: "edge", piece: id, index: i }) }, `${i + 1}${e.type === "cubic" ? " ⌒" : ""}`),
         h("td", {}, check(`edge-st-${i}`, e.stitched, (v) => set((x) => (x.edges[i].stitched = v)))),
         h("td", {}, rep ? fmtLen(rep.lengthMm, u) : ""),
         h("td", {}, rep && e.stitched ? String(rep.holeCount) : ""),
+        h("td", {}, (e.skiveMm ?? 0) > 0 ? fmtLen(e.skiveMm ?? 0, u) : ""),
       ),
     );
   });
@@ -248,48 +344,37 @@ function pieceInspector(id: string): Node[] {
     h(
       "div",
       { class: "btn-row" },
-      button("Stitch all", () => set((x) => x.edges.forEach((e) => (e.stitched = true)))),
+      button("Stitch all", () => set((x) => x.edges.forEach((e) => (e.stitched = true))), "quiet"),
       button("Stitch none", () => set((x) => x.edges.forEach((e) => (e.stitched = false))), "quiet"),
     ),
     heading("Folds"),
   );
-  if (!pc.folds.length) out.push(h("p", { class: "hint" }, "Use Fold (F) and click the piece where it bends. Hidework adds the length the outer layer needs."));
+  if (!pc.folds.length) out.push(h("p", { class: "hint" }, "Fold tool (F): click where the piece bends. The pattern gains the length the outer layer needs."));
   for (const f of pc.folds) {
     const g = cp?.folds.find((x) => x.id === f.id);
     out.push(
       h(
         "div",
-        { class: "seam", onclick: () => { state.sel = { kind: "fold", piece: id, id: f.id }; notify(); } },
+        { class: "seam", onclick: select({ kind: "fold", piece: id, id: f.id }) },
         h("strong", {}, `${f.orientation === "horizontal" ? "Across" : "Down"} at ${fmtLen(f.position, u)}`),
-        h("span", {}, g ? `Adds ${fmtLen(g.shiftMm, u)} around ${fmtLen(f.contentsMm, u)} of contents` : ""),
+        h("span", {}, g ? `+${fmtLen(g.shiftMm, u)} around ${fmtLen(f.contentsMm, u)} of contents` : ""),
       ),
     );
   }
-  out.push(heading("Punched holes"));
-  if (!pc.holes.length) out.push(h("p", { class: "hint" }, "Use Punch (H) to place snaps, rivets or strap holes."));
+  out.push(heading("Holes & hardware"));
+  if (!pc.holes.length) out.push(h("p", { class: "hint" }, "Punch tool (H), or pick hardware from the library."));
   for (const hole of pc.holes) {
+    const slot = (hole.lengthMm ?? 0) > hole.diameterMm;
     out.push(
       h(
         "div",
-        { class: "seam", onclick: () => { state.sel = { kind: "hole", piece: id, id: hole.id }; notify(); } },
-        h("strong", {}, hole.label || "Hole"),
-        h("span", {}, `${hole.diameterMm.toFixed(1)} mm at ${fmtLen(hole.center.x, u)}, ${fmtLen(hole.center.y, u)}`),
+        { class: "seam", onclick: select({ kind: "hole", piece: id, id: hole.id }) },
+        h("strong", {}, hole.label || (slot ? "Slot" : "Hole")),
+        h("span", {}, `${slot ? `${hole.diameterMm} × ${hole.lengthMm} mm slot` : `${hole.diameterMm.toFixed(1)} mm`} at ${fmtLen(hole.center.x, u)}, ${fmtLen(hole.center.y, u)}`),
       ),
     );
   }
-  out.push(
-    h(
-      "div",
-      { class: "btn-row spaced" },
-      button("Duplicate", () => {
-        const copy = duplicatePiece(pc);
-        edit((p) => p.pieces.push(copy));
-        state.sel = { kind: "piece", piece: copy.id };
-        notify();
-      }),
-      button("Delete piece", () => deletePiece(id), "danger"),
-    ),
-  );
+  out.push(h("div", { class: "btn-row spaced" }, button("Delete piece", () => deletePiece(id), "danger")));
   return out;
 }
 
@@ -302,16 +387,41 @@ export function deletePiece(id: string): void {
   notify();
 }
 
+/** Make a gusset as long as the stitch line (or edge) of `edges`, and join it. */
+export async function makeGusset(pieceId: string, edges: number[], widthMm: number): Promise<string> {
+  const pc = piece(pieceId);
+  const cp = computedPiece(pieceId);
+  if (!pc || !cp) throw new Error("No such piece.");
+  const stitched = edges.every((e) => pc.edges[e]?.stitched);
+  const length = edges.reduce((s, e) => s + (stitched ? cp.edges[e]?.stitchLengthMm ?? 0 : cp.edges[e]?.lengthMm ?? 0), 0);
+  const total = stitched ? length + 2 * pc.stitch.marginMm : length;
+  const gid = uid("p");
+  const at = { x: pc.position.x, y: cp.bounds.max.y + pc.position.y + 25 };
+  const g = await api.gusset(`${pc.name} gusset`, total, widthMm, pc.materialId, at, gid);
+  g.stitch = { ...pc.stitch };
+  edit((p) => {
+    p.pieces.push(g);
+    p.joins.push({ id: uid("j"), a: { pieceId, edges }, b: { pieceId: gid, edges: [0] } });
+  });
+  return gid;
+}
+
 function edgeInspector(id: string, i: number): Node[] {
   const pc = piece(id);
   const rep = computedPiece(id)?.edges[i];
   if (!pc || !pc.edges[i]) return [];
   const e = pc.edges[i];
   const u = state.project.units;
+  const gussetWidth = num("gusset-w", 40, () => {}, { step: 1, min: 5 });
   return [
     back(id),
     heading(`Edge ${i + 1}`),
-    field("Stitched", check("e-st", e.stitched, (v) => edit(() => (pc.edges[i].stitched = v)))),
+    h(
+      "div",
+      { class: "grid2" },
+      field("Stitched", check("e-st", e.stitched, (v) => edit(() => (pc.edges[i].stitched = v)))),
+      field(`Skive width, ${unitLabel()}`, len("e-skive", e.skiveMm ?? 0, (v) => edit(() => (pc.edges[i].skiveMm = Math.max(0, v))), 0)),
+    ),
     h(
       "table",
       { class: "report" },
@@ -319,12 +429,18 @@ function edgeInspector(id: string, i: number): Node[] {
       e.stitched ? h("tr", {}, h("td", {}, "Stitch line"), h("td", {}, rep ? fmtLen(rep.stitchLengthMm, u) : "")) : null,
       e.stitched ? h("tr", {}, h("td", {}, "Holes"), h("td", {}, rep ? String(rep.holeCount) : "")) : null,
     ),
+    h("div", { class: "btn-row" }, button(e.type === "line" ? "Make curved" : "Make straight", () => edit(() => toggleCurve(pc, i)), "quiet")),
+    heading("Gusset from this edge"),
     h(
       "div",
       { class: "btn-row" },
-      button(e.type === "line" ? "Make curved" : "Make straight", () => edit(() => toggleCurve(pc, i))),
+      field("Width, mm", gussetWidth),
+      button("Make gusset", async () => {
+        const gid = await makeGusset(id, [i], parseFloat(gussetWidth.value) || 40);
+        state.sel = { kind: "piece", piece: gid };
+        notify();
+      }),
     ),
-    h("p", { class: "hint" }, e.type === "cubic" ? "Drag the two round handles to shape the curve." : "Double-click the edge to add a corner."),
   ];
 }
 
@@ -334,24 +450,15 @@ function vertexInspector(id: string, i: number): Node[] {
   const v = pc.vertices[i];
   return [
     back(id),
-    heading(`Corner ${i + 1}`),
+    heading(`Point ${i + 1}`),
     h(
       "div",
       { class: "grid2" },
       field(`X, ${unitLabel()}`, len("v-x", v.x, (x) => edit(() => (pc.vertices[i].x = x)))),
       field(`Y, ${unitLabel()}`, len("v-y", v.y, (y) => edit(() => (pc.vertices[i].y = y)))),
     ),
-    h("p", { class: "hint" }, "Positions are before fold allowance, measured from the piece's origin."),
-    h(
-      "div",
-      { class: "btn-row" },
-      button("Remove corner", () => {
-        let ok = false;
-        edit((p) => (ok = deleteVertex(p, pc, i)));
-        if (ok) state.sel = { kind: "piece", piece: id };
-        notify();
-      }, "quiet"),
-    ),
+    h("p", { class: "hint" }, "Before fold allowance, from the piece origin."),
+    h("div", { class: "btn-row" }, button("Delete point", () => { let ok = false; edit((p) => (ok = deleteVertex(p, pc, i))); if (ok) state.sel = { kind: "piece", piece: id }; notify(); }, "danger")),
   ];
 }
 
@@ -359,18 +466,23 @@ function holeInspector(id: string, hid: string): Node[] {
   const pc = piece(id);
   const hole = pc?.holes.find((x) => x.id === hid);
   if (!pc || !hole) return [];
+  const dia = num("h-d", hole.diameterMm, (v) => edit(() => (hole.diameterMm = Math.max(0.5, v))), { step: 0.5, min: 0.5 });
+  dia.setAttribute("list", "punch-sizes");
   return [
     back(id),
-    heading("Punched hole"),
-    field("Label", text("h-label", hole.label, (v) => edit(() => (hole.label = v)))),
-    field("Diameter, mm", num("h-d", hole.diameterMm, (v) => edit(() => (hole.diameterMm = Math.max(0.5, v))), { step: 0.5, min: 0.5 })),
+    heading((hole.lengthMm ?? 0) > hole.diameterMm ? "Slot" : "Hole"),
+    field("Label", text("h-label", hole.label, (v) => edit(() => (hole.label = v))), "Rivet, snap or screw holes that line up when folded are fastened together in 3D."),
     h(
       "div",
-      { class: "grid2" },
-      field(`X, ${unitLabel()}`, len("h-x", hole.center.x, (x) => edit(() => (hole.center.x = x)))),
-      field(`Y, ${unitLabel()}`, len("h-y", hole.center.y, (y) => edit(() => (hole.center.y = y)))),
+      { class: "grid3" },
+      field("Size, mm", dia),
+      field("Slot, mm", num("h-len", hole.lengthMm ?? 0, (v) => edit(() => (hole.lengthMm = Math.max(0, v))), { step: 1, min: 0 })),
+      field("Angle °", num("h-ang", hole.angleDeg ?? 0, (v) => edit(() => (hole.angleDeg = v)), { step: 15 })),
+      field(`X`, len("h-x", hole.center.x, (x) => edit(() => (hole.center.x = x)))),
+      field(`Y`, len("h-y", hole.center.y, (y) => edit(() => (hole.center.y = y)))),
     ),
-    h("div", { class: "btn-row" }, button("Remove hole", () => { edit(() => (pc.holes = pc.holes.filter((x) => x.id !== hid))); state.sel = { kind: "piece", piece: id }; notify(); }, "quiet")),
+    h("datalist", { id: "punch-sizes" }, ...PUNCH_SIZES.map((s) => h("option", { value: String(s) }))),
+    h("div", { class: "btn-row" }, button("Delete", () => { edit(() => (pc.holes = pc.holes.filter((x) => x.id !== hid))); state.sel = { kind: "piece", piece: id }; notify(); }, "danger")),
   ];
 }
 
@@ -382,15 +494,155 @@ function foldInspector(id: string, fid: string): Node[] {
   const u = state.project.units;
   return [
     back(id),
-    heading("Fold"),
-    field("Direction", choose("f-o", [["horizontal", "Across (horizontal)"], ["vertical", "Down (vertical)"]], f.orientation, (v) => edit(() => (f.orientation = v)))),
-    field(`Position, ${unitLabel()}`, len("f-pos", f.position, (v) => edit(() => (f.position = v)))),
-    field(`Contents when closed, ${unitLabel()}`, len("f-contents", f.contentsMm, (v) => edit(() => (f.contentsMm = Math.max(0, v))), 0), "Inner layers, cards or a notebook between the two halves."),
+    heading("Fold line"),
+    field("Direction", choose("f-o", [["horizontal", "Across"], ["vertical", "Down"]], f.orientation, (v) => edit(() => (f.orientation = v)))),
     h(
-      "p",
-      { class: "verdict ok" },
-      g ? `Adds ${fmtLen(g.shiftMm, u)}: π × (contents + leather) ÷ 2, the outer layer's arc around the bend.` : "",
+      "div",
+      { class: "grid2" },
+      field(`Position, ${unitLabel()}`, len("f-pos", f.position, (v) => edit(() => (f.position = v)))),
+      field(`Contents, ${unitLabel()}`, len("f-contents", f.contentsMm, (v) => edit(() => (f.contentsMm = Math.max(0, v))), 0)),
     ),
-    h("div", { class: "btn-row" }, button("Remove fold", () => { edit(() => (pc.folds = pc.folds.filter((x) => x.id !== fid))); state.sel = { kind: "piece", piece: id }; notify(); }, "quiet")),
+    h("p", { class: "verdict ok" }, g ? `Adds ${fmtLen(g.shiftMm, u)}: π × (contents + leather) ÷ 2.` : ""),
+    h("div", { class: "btn-row" }, button("Delete fold", () => { edit(() => (pc.folds = pc.folds.filter((x) => x.id !== fid))); state.sel = { kind: "piece", piece: id }; notify(); }, "danger")),
   ];
+}
+
+// ---------- strap builder ----------
+
+export async function addStrap(params: StrapParams, materialId?: string, at?: { x: number; y: number }): Promise<string> {
+  const id = uid("p");
+  const pos = at ?? (() => {
+    const c = viewCenter();
+    return { x: Math.round(c.x - (params.lengthMm ?? 1000) / 2), y: Math.round(c.y) };
+  })();
+  const pc = await api.strap(params, materialId ?? state.project.materials[0]?.id ?? "", pos, id);
+  edit((p) => p.pieces.push(pc));
+  return id;
+}
+
+function strapInspector(): Node[] {
+  const f = strapForm;
+  const n = (key: keyof StrapParams, label: string, step = 1) => field(label, num(`strap-${key}`, Number(f[key] ?? 0), (v) => ((f as Record<string, unknown>)[key] = v), { step, min: 0 }));
+  return [
+    h("a", { class: "back", href: "#", onclick: (e: Event) => { e.preventDefault(); panel.special = null; notify(); } }, "‹ Back"),
+    heading("Strap or belt"),
+    field("Name", text("strap-name", f.name ?? "Strap", (v) => (f.name = v))),
+    h(
+      "div",
+      { class: "grid2" },
+      n("lengthMm", "Length, mm", 5),
+      n("widthMm", "Width, mm"),
+      field("Tip", choose("strap-tip", [["round", "Round"], ["point", "Point"], ["square", "Square"]], f.tip ?? "round", (v) => (f.tip = v))),
+      n("holes", "Holes"),
+      n("holeSpacingMm", "Hole spacing"),
+      n("firstHoleMm", "Tip to 1st hole"),
+      n("holeMm", "Hole size", 0.5),
+      field("Buckle end", check("strap-buckle", f.buckleEnd ?? true, (v) => (f.buckleEnd = v))),
+      n("buckleFoldMm", "Buckle wrap"),
+      n("tongueSlotMm", "Tongue slot"),
+      n("rivetMm", "Rivet hole", 0.5),
+      field("Stitch edges", check("strap-stitch", f.stitched ?? false, (v) => (f.stitched = v))),
+    ),
+    h("div", { class: "btn-row" }, button("Make strap", async () => { const id = await addStrap({ ...f }); panel.special = null; state.sel = { kind: "piece", piece: id }; notify(); }, "primary")),
+  ];
+}
+
+// ---------- fabric test bench (CLO's Fabric Kit, as a dialog) ----------
+
+let fabricOpen = false;
+
+export function openFabricTest(materialId?: string): void {
+  fabricOpen = true;
+  const pid = state.sel.kind === "piece" ? state.sel.piece : state.project.pieces[0]?.id;
+  if (pid) defaultsFor(pid);
+  if (materialId) {
+    const m = state.project.materials.find((x) => x.id === materialId);
+    const oz = m ? Math.round((m.thicknessMm / OZ_MM) * 2) / 2 : 3;
+    drape.variants = [{ source: `m:${materialId}`, oz }, { source: `m:${materialId}`, oz: oz * 2 }, { source: "p:deer", oz: 3 }];
+  }
+  document.getElementById("fabric-test")?.classList.remove("hidden");
+  void loadPresets().then(notify);
+  notify();
+}
+
+export function closeFabricTest(): void {
+  fabricOpen = false;
+  document.getElementById("fabric-test")?.classList.add("hidden");
+  notify();
+}
+
+export function fabricTestOpen(): boolean {
+  return fabricOpen;
+}
+
+export function renderFabricTest(el: HTMLElement): void {
+  if (!fabricOpen) return;
+  rerender(el, drapeControls);
+}
+
+function drapeControls(): Node[] {
+  const pcs = state.project.pieces.map((p) => [p.id, p.name] as [string, string]);
+  const sc = drape.scene;
+  const setScene = (s: Scene) => { drape.scene = s; notify(); };
+  const sides: [Side, string][] = [["right", "Right edge"], ["left", "Left edge"], ["bottom", "Bottom edge"], ["top", "Top edge"]];
+  const sources: [string, string][] = [
+    ...state.project.materials.map((m) => [`m:${m.id}`, `Project: ${m.name}`] as [string, string]),
+    ...drape.presets.map((p) => [`p:${p.id}`, p.name] as [string, string]),
+  ];
+  const out: Node[] = [
+    h("p", { class: "hint" }, "Compare up to four fabrics or weights on the standard bench tests, side by side."),
+    field("Specimen (piece)", choose("dr-piece", pcs, drape.pieceId ?? "", (v) => { drape.pieceId = v; notify(); })),
+    field("Test", choose("dr-scene", [["cantilever", "Cantilever (table edge)"], ["pedestal", "Drape (Cusick pedestal)"], ["hang", "Hang from an edge"]], sc.type, (v) => {
+      if (v === "cantilever") setScene({ type: "cantilever", side: "right", overhangMm: 100 });
+      if (v === "pedestal") setScene({ type: "pedestal", radiusMm: 50 });
+      if (v === "hang") setScene({ type: "hang", side: "top" });
+    })),
+  ];
+  if (sc.type === "cantilever") {
+    out.push(h("div", { class: "grid2" }, field("Overhanging edge", choose("dr-side", sides, sc.side, (v) => setScene({ ...sc, side: v }))), field("Overhang, mm", num("dr-over", sc.overhangMm, (v) => setScene({ ...sc, overhangMm: Math.max(5, v) }), { step: 5, min: 5 }))));
+  } else if (sc.type === "pedestal") {
+    out.push(field("Pedestal radius, mm", num("dr-rad", sc.radiusMm, (v) => setScene({ ...sc, radiusMm: Math.max(5, v) }), { step: 5, min: 5 })));
+  } else {
+    out.push(field("Pinned edge", choose("dr-side", sides, sc.side, (v) => setScene({ ...sc, side: v }))));
+  }
+  out.push(heading("Compare"));
+  drape.variants.forEach((v, k) => {
+    out.push(
+      h(
+        "div",
+        { class: "variant" },
+        choose(`dr-src-${k}`, sources, v.source, (s) => { v.source = s; notify(); }),
+        h("div", { class: "variant-row" }, field("oz", num(`dr-oz-${k}`, v.oz, (x) => { v.oz = Math.max(0.5, x); notify(); }, { step: 0.5, min: 0.5 })), h("span", { class: "variant-mm" }, `${(v.oz * OZ_MM).toFixed(2)} mm`), button("✕", () => { drape.variants.splice(k, 1); notify(); }, "quiet icon")),
+      ),
+    );
+  });
+  out.push(
+    h(
+      "div",
+      { class: "btn-row" },
+      drape.variants.length < 4 ? button("Add fabric", () => { drape.variants.push({ source: drape.variants[0]?.source ?? "p:vegtan-firm", oz: 7 }); notify(); }, "quiet") : null,
+      button(drape.running ? "Simulating…" : "Run test", async () => {
+        try {
+          await runDrape();
+        } catch (e) {
+          setStatus(String(e instanceof Error ? e.message : e));
+        }
+      }, "primary"),
+    ),
+  );
+  const r = drape.result;
+  if (r) {
+    out.push(heading("Results"));
+    const t = h("table", { class: "report" }, h("tr", {}, h("th", {}, "Fabric"), h("th", {}, "Bend len"), h("th", {}, sc.type === "pedestal" ? "Drape" : sc.type === "cantilever" ? "Droop" : "Drop"), h("th", {}, "Mass")));
+    r.variants.forEach((v) => {
+      const m = v.metrics;
+      const main = m.droopDeg !== null ? `${m.droopDeg.toFixed(1)}°` : m.drapeCoefficient !== null ? m.drapeCoefficient.toFixed(2) : `${m.tipDropMm.toFixed(0)} mm`;
+      t.append(h("tr", {}, h("td", {}, v.label), h("td", {}, `${m.bendingLengthMm.toFixed(0)} mm`), h("td", {}, main), h("td", {}, `${m.massG.toFixed(1)} g`)));
+    });
+    out.push(t);
+    const slider = h("input", { type: "range", id: "drape-scrub", min: "0", max: String(maxFrame()), value: String(drape.frame), oninput: (e: Event) => scrub(parseInt((e.target as HTMLInputElement).value, 10)) });
+    out.push(h("div", { class: "btn-row" }, slider, button("Replay", replay, "quiet")));
+    out.push(h("p", { class: "hint" }, "A strip overhanging twice its bending length droops to 41.5° (ASTM D1388). Drape 1.0 stays flat; lower hangs more."));
+  }
+  return out;
 }

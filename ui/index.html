@@ -6,45 +6,54 @@
     <title>Hidework</title>
   </head>
   <body>
-    <header class="toolbar">
+    <header class="menubar">
       <div class="brand"><img src="/seal.png" alt="" /><span class="title">Hidework</span></div>
-      <div class="group">
-        <button class="btn" id="btn-new" type="button" title="New from a template">New ▾</button>
-        <button class="btn" id="btn-open" type="button" title="Open (Ctrl+O)">Open</button>
-        <button class="btn" id="btn-save" type="button" title="Save (Ctrl+S, Shift for Save As)">Save</button>
-      </div>
-      <div class="group">
-        <button class="btn icon" id="btn-undo" type="button" title="Undo (Ctrl+Z)">↶</button>
-        <button class="btn icon" id="btn-redo" type="button" title="Redo (Ctrl+Y)">↷</button>
-      </div>
-      <div class="group tools">
-        <button class="btn tool" data-tool="select" type="button" title="Select and move (V)">Select</button>
-        <button class="btn tool" data-tool="hole" type="button" title="Punch a hole (H)">Punch</button>
-        <button class="btn tool" data-tool="fold" type="button" title="Add a fold (F)">Fold</button>
-        <button class="btn icon" id="btn-fold-dir" type="button" title="Fold direction">═</button>
-        <button class="btn tool" data-tool="join" type="button" title="Pair two edges that sew together (J)">Join</button>
-      </div>
-      <div class="group">
-        <button class="btn" id="btn-fit" type="button" title="Fit the pattern in view (0)">Fit</button>
-      </div>
+      <nav id="menus" class="menus"></nav>
       <div class="spacer"></div>
-      <div class="group">
-        <select id="page-size" title="Paper">
+      <div class="menubar-actions">
+        <select id="page-size" title="Paper size for printing">
           <option value="letter">Letter</option>
           <option value="a4">A4</option>
         </select>
-        <button class="btn" id="btn-svg" type="button" title="Save a true-scale SVG for laser or cutting machines">SVG</button>
-        <button class="btn" id="btn-pdf" type="button" title="Save a tiled, true-scale PDF">PDF</button>
-        <button class="btn seal" id="btn-print" type="button" title="Open the template in your PDF viewer to print">Print</button>
+        <button class="btn" id="btn-print" type="button" title="Print the true-scale template (Ctrl+P)">Print</button>
+        <button class="btn sim-toggle" id="btn-sim" type="button" title="Simulate (Space)"><span class="dot"></span>Simulate</button>
       </div>
     </header>
-    <main>
-      <aside id="ledger" class="panel left"></aside>
-      <div id="stage"><canvas id="canvas" tabindex="0"></canvas></div>
-      <aside id="inspector" class="panel right"></aside>
+    <main class="workspace">
+      <aside id="library" class="dock left"></aside>
+      <section class="window w3d">
+        <div class="win-head">
+          <span class="win-title">3D</span>
+          <div id="tb3d" class="win-toolbar"></div>
+        </div>
+        <div id="view3d" class="win-body"></div>
+        <div id="hud3d" class="hud"></div>
+      </section>
+      <div class="splitter" id="splitter" title="Drag to resize"></div>
+      <section class="window w2d">
+        <div class="win-head">
+          <span class="win-title">2D</span>
+          <div id="tb2d" class="win-toolbar"></div>
+        </div>
+        <div id="stage" class="win-body"><canvas id="canvas" tabindex="0"></canvas></div>
+      </section>
+      <aside class="dock right">
+        <div id="browser" class="browser"></div>
+        <div id="inspector" class="property-editor"></div>
+      </aside>
     </main>
     <footer class="statusbar"><span id="status"></span><span id="info"></span></footer>
     <div id="menu" class="menu hidden"></div>
+    <div id="modal" class="modal hidden"></div>
+    <div id="fabric-test" class="modal hidden">
+      <div class="fabric-card">
+        <div class="fabric-head"><h2>Fabric test</h2><button class="btn icon" id="fabric-close" type="button" title="Close">✕</button></div>
+        <div class="fabric-body">
+          <div id="fabric-controls" class="fabric-controls"></div>
+          <div id="drape-view" class="fabric-view"></div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

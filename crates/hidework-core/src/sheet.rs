@@ -102,9 +102,21 @@ pub fn build_sheet(project: &Project, computed: &ComputedProject) -> Sheet {
                 shapes.push(Shape::Text { at: at + off, size: 2.4, text: format!("FOLD (+{:.1} mm)", f.shift_mm), align: Align::Left, bold: false });
             }
         }
+        for line in &cp.skive {
+            shapes.push(Shape::Poly { pts: tr(line), closed: false, style: Style::Finished });
+            let mid = line[line.len() / 2] + off;
+            shapes.push(Shape::Text { at: mid + v(0.0, -1.0), size: 2.2, text: "skive".into(), align: Align::Center, bold: false });
+        }
         for h in &cp.holes {
             let c = h.center + off;
             let r = h.diameter_mm / 2.0;
+            if let Some(slot) = crate::generators::slot_outline(h) {
+                shapes.push(Shape::Poly { pts: tr(&slot), closed: true, style: Style::Hardware });
+                if !h.label.is_empty() {
+                    shapes.push(Shape::Text { at: c + v(0.0, r + 4.0), size: 2.4, text: h.label.clone(), align: Align::Center, bold: false });
+                }
+                continue;
+            }
             shapes.push(Shape::Circle { c, r, style: Style::Hardware, filled: false });
             let a = r + 1.5;
             shapes.push(Shape::Poly { pts: vec![c - v(a, 0.0), c + v(a, 0.0)], closed: false, style: Style::Guide });
@@ -124,6 +136,9 @@ pub fn build_sheet(project: &Project, computed: &ComputedProject) -> Sheet {
             bold: false,
         });
         grain_arrow(c + v(0.0, 14.0), piece.grain_deg, 18.0, &mut shapes);
+        for (k, line) in piece.notes.lines().filter(|l| !l.trim().is_empty()).enumerate() {
+            shapes.push(Shape::Text { at: c + v(0.0, 28.0 + 4.0 * k as f64), size: 2.6, text: line.trim().to_string(), align: Align::Center, bold: false });
+        }
     }
     Sheet { width, height, shapes }
 }

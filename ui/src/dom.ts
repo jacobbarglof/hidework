@@ -86,3 +86,15 @@ export function rerender(container: HTMLElement, build: () => Node[]): void {
     }
   }
 }
+
+/** PNG (base64, no data: prefix) of a canvas, scaled so its longer side is at most `max` pixels. */
+export function canvasPng(src: HTMLCanvasElement, max = 1200): string {
+  const k = Math.min(1, max / Math.max(src.width, src.height, 1));
+  const out = document.createElement("canvas");
+  out.width = Math.max(1, Math.round(src.width * k));
+  out.height = Math.max(1, Math.round(src.height * k));
+  const c = out.getContext("2d")!;
+  c.imageSmoothingQuality = "high";
+  c.drawImage(src, 0, 0, out.width, out.height);
+  return out.toDataURL("image/png").split(",")[1] ?? "";
+}

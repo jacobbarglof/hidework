@@ -1,5 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Computed, PageSize, Project, TemplateInfo } from "./types";
+import type {
+  Bom,
+  Computed,
+  DrapeRequest,
+  DrapeResult,
+  FabOptions,
+  MaterialStats,
+  PageSize,
+  Piece,
+  Preset,
+  Project,
+  StrapParams,
+  TemplateInfo,
+  V,
+} from "./types";
 
 export const api = {
   compute: (project: Project) => invoke<Computed>("compute_project", { project }),
@@ -9,6 +23,20 @@ export const api = {
   load: (path: string) => invoke<Project>("load_project", { path }),
   exportSvg: (project: Project, path: string) => invoke<void>("export_svg", { project, path }),
   exportPdf: (project: Project, path: string, page: PageSize) => invoke<number>("export_pdf", { project, path, page }),
+  exportLaserSvg: (project: Project, path: string, options: FabOptions) => invoke<void>("export_laser_svg", { project, path, options }),
+  exportDxf: (project: Project, path: string, options: FabOptions) => invoke<void>("export_dxf", { project, path, options }),
+  exportStl: (project: Project, path: string, options: FabOptions) => invoke<number>("export_stl", { project, path, options }),
   printPdf: (project: Project, page: PageSize) => invoke<number>("print_pdf", { project, page }),
   pageCount: (project: Project, page: PageSize) => invoke<number>("page_count", { project, page }),
+  presets: () => invoke<Preset[]>("material_presets"),
+  materialStats: (project: Project) => invoke<MaterialStats[]>("material_stats", { project }),
+  calibrate: (thickness: number, density: number, overhang: number) => invoke<number>("calibrate_bending", { thickness, density, overhang }),
+  densityFromWeight: (oz: number, thickness: number) => invoke<number>("density_from_weight", { oz, thickness }),
+  drape: (request: DrapeRequest) => invoke<DrapeResult>("simulate_drape", { request }),
+  bom: (project: Project, waste: number) => invoke<Bom>("bill_of_materials", { project, waste }),
+  strap: (params: StrapParams, material: string, at: V, id: string) => invoke<Piece>("make_strap", { params, material, at, id }),
+  gusset: (name: string, length: number, width: number, material: string, at: V, id: string) =>
+    invoke<Piece>("make_gusset", { name, length, width, material, at, id }),
+  lining: (project: Project, piece: string, inset: number, id: string) => invoke<Piece>("make_lining", { project, piece, inset, id }),
+  controlReply: (id: number, value: unknown) => invoke<void>("control_reply", { id, value }),
 };

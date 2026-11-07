@@ -192,3 +192,61 @@ export function midpoint(pts: V[]): V {
   }
   return pts[0];
 }
+
+function pieceBounds(pc: Piece): { minX: number; maxX: number; minY: number; maxY: number } {
+  const xs = pc.vertices.map((v) => v.x);
+  const ys = pc.vertices.map((v) => v.y);
+  return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
+}
+
+/** Apply a point map to everything in a piece (vertices, curve handles, holes). */
+function mapPiece(pc: Piece, f: (p: V) => V): void {
+  pc.vertices = pc.vertices.map(f);
+  pc.edges = pc.edges.map((e) => (e.type === "cubic" ? { ...e, c1: f(e.c1), c2: f(e.c2) } : e));
+  pc.holes.forEach((h) => (h.center = f(h.center)));
+}
+
+/** Flip left-right (axis "x") or top-bottom (axis "y") in place. Edge numbers stay the same. */
+export function mirrorPiece(pc: Piece, axis: "x" | "y"): void {
+  const b = pieceBounds(pc);
+  if (axis === "x") {
+    const s = b.minX + b.maxX;
+    mapPiece(pc, (p) => ({ x: s - p.x, y: p.y }));
+    pc.folds.forEach((f) => f.orientation === "vertical" && (f.position = s - f.position));
+    pc.holes.forEach((h) => (h.angleDeg = 180 - (h.angleDeg ?? 0)));
+    pc.grainDeg = 180 - pc.grainDeg;
+  } else {
+    const s = b.minY + b.maxY;
+    mapPiece(pc, (p) => ({ x: p.x, y: s - p.y }));
+    pc.folds.forEach((f) => f.orientation === "horizontal" && (f.position = s - f.position));
+    pc.holes.forEach((h) => (h.angleDeg = -(h.angleDeg ?? 0)));
+    pc.grainDeg = -pc.grainDeg;
+  }
+}
+
+/** Quarter turn about the piece's corner box, keeping its top-left where it was. */
+export function rotatePiece(pc: Piece, clockwise: boolean): void {
+  const b = pieceBounds(pc);
+  // Clockwise on screen (y down): (x, y) -> (-y, x).
+  const raw = (p: V): V => (clockwise ? { x: -p.y, y: p.x } : { x: p.y, y: -p.x });
+  const corners = [raw({ x: b.minX, y: b.minY }), raw({ x: b.maxX, y: b.maxY })];
+  const nx = Math.min(corners[0].x, corners[1].x);
+  const ny = Math.min(corners[0].y, corners[1].y);
+  const f = (p: V): V => {
+    const r = raw(p);
+    return { x: r.x - nx + b.minX, y: r.y - ny + b.minY };
+  };
+  mapPiece(pc, f);
+  pc.folds.forEach((fd) => {
+    if (fd.orientation === "horizontal") {
+      fd.orientation = "vertical";
+      fd.position = f({ x: 0, y: fd.position }).x;
+    } else {
+      fd.orientation = "horizontal";
+      fd.position = f({ x: fd.position, y: 0 }).y;
+    }
+  });
+  const turn = clockwise ? 90 : -90;
+  pc.holes.forEach((h) => (h.angleDeg = (h.angleDeg ?? 0) + turn));
+  pc.grainDeg += turn;
+}

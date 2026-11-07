@@ -19,6 +19,9 @@ pub struct Project {
     pub pieces: Vec<Piece>,
     #[serde(default)]
     pub joins: Vec<Join>,
+    /// Thread colour for the 3D preview (CSS colour).
+    #[serde(default)]
+    pub thread_color: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -35,6 +38,15 @@ pub struct Material {
     pub name: String,
     pub kind: MaterialKind,
     pub thickness_mm: f64,
+    /// Physical properties for simulation; none means the defaults for its kind.
+    #[serde(default)]
+    pub physics: Option<crate::physics::Physics>,
+    /// Price per square foot, for costing.
+    #[serde(default)]
+    pub cost_per_sqft: Option<f64>,
+    /// Surface colour for the 3D preview (CSS colour).
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -70,6 +82,9 @@ pub struct Piece {
     /// Direction of the hide's spine or the canvas warp, in degrees (0 = along +x).
     #[serde(default)]
     pub grain_deg: f64,
+    /// Free text printed on the template (edge finish, assembly order...).
+    #[serde(default)]
+    pub notes: String,
 }
 
 fn one() -> u32 {
@@ -83,6 +98,18 @@ pub struct Edge {
     pub kind: EdgeKind,
     #[serde(default)]
     pub stitched: bool,
+    /// Width of a skive zone along this edge (0 = none).
+    #[serde(default)]
+    pub skive_mm: f64,
+}
+
+impl Edge {
+    pub fn new(kind: EdgeKind, stitched: bool) -> Edge {
+        Edge { kind, stitched, skive_mm: 0.0 }
+    }
+    pub fn line(stitched: bool) -> Edge {
+        Edge::new(EdgeKind::Line, stitched)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -141,6 +168,13 @@ pub struct Hole {
     pub diameter_mm: f64,
     #[serde(default)]
     pub label: String,
+    /// Overall length of an oblong slot (buckle tongue, strap slot); 0 or less than the diameter
+    /// means a round hole.
+    #[serde(default)]
+    pub length_mm: f64,
+    /// Slot direction in degrees (0 = along +x).
+    #[serde(default)]
+    pub angle_deg: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -188,7 +222,7 @@ mod tests {
         let e: Edge = serde_json::from_str(r#"{"type":"cubic","c1":{"x":1,"y":2},"c2":{"x":3,"y":4},"stitched":true}"#).unwrap();
         assert!(e.stitched);
         assert!(matches!(e.kind, EdgeKind::Cubic { .. }));
-        let s = serde_json::to_string(&Edge { kind: EdgeKind::Line, stitched: false }).unwrap();
-        assert_eq!(s, r#"{"type":"line","stitched":false}"#);
+        let s = serde_json::to_string(&Edge::line(false)).unwrap();
+        assert_eq!(s, r#"{"type":"line","stitched":false,"skiveMm":0.0}"#);
     }
 }

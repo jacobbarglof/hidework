@@ -37,6 +37,8 @@ pub struct ComputedPiece {
     pub stitch_runs: Vec<StitchRun>,
     pub folds: Vec<FoldGeom>,
     pub holes: Vec<Hole>,
+    /// Inner boundary of each skive zone, as polylines.
+    pub skive: Vec<Vec<Vec2>>,
     pub edges: Vec<EdgeReport>,
     pub thickness_mm: f64,
     pub material_name: String,
@@ -398,7 +400,28 @@ fn compute_piece(piece: &Piece, thickness: f64, material_name: String) -> Comput
         .map(|h| Hole { center: map_all(&folds, h.center), ..h.clone() })
         .collect();
 
+    let mut skive = Vec::new();
+    for (e, edge) in piece.edges.iter().enumerate() {
+        if edge.skive_mm <= 0.0 {
+            continue;
+        }
+        let ins = offset_closed(&pts, edge.skive_mm);
+        let mut line: Vec<Vec2> = Vec::new();
+        for i in 0..m {
+            if tags[i] == Some(e) {
+                if line.last().map_or(true, |l: &Vec2| l.dist(ins[i]) > 1e-9) {
+                    line.push(ins[i]);
+                }
+                line.push(ins[(i + 1) % m]);
+            }
+        }
+        if line.len() > 1 {
+            skive.push(line);
+        }
+    }
+
     ComputedPiece {
+        skive,
         id: piece.id.clone(),
         bounds: Rect::of(&cut),
         outline: pts,
@@ -477,13 +500,14 @@ mod tests {
             material_id: "m".into(),
             position: v(0.0, 0.0),
             vertices: vec![v(0.0, 0.0), v(w, 0.0), v(w, h), v(0.0, h)],
-            edges: (0..4).map(|_| Edge { kind: EdgeKind::Line, stitched }).collect(),
+            edges: (0..4).map(|_| Edge::line(stitched)).collect(),
             cut_count: 1,
             seam_allowance_mm: 0.0,
             stitch: StitchSettings::default(),
             folds: vec![],
             holes: vec![],
             grain_deg: 0.0,
+            notes: String::new(),
         }
     }
 
