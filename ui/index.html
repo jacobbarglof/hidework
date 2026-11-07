@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hidework</title>
+  </head>
+  <body>
+    <header class="toolbar">
+      <div class="brand"><img src="/seal.png" alt="" /><span class="title">Hidework</span></div>
+      <div class="group">
+        <button class="btn" id="btn-new" type="button" title="New from a template">New ▾</button>
+        <button class="btn" id="btn-open" type="button" title="Open (Ctrl+O)">Open</button>
+        <button class="btn" id="btn-save" type="button" title="Save (Ctrl+S, Shift for Save As)">Save</button>
+      </div>
+      <div class="group">
+        <button class="btn icon" id="btn-undo" type="button" title="Undo (Ctrl+Z)">↶</button>
+        <button class="btn icon" id="btn-redo" type="button" title="Redo (Ctrl+Y)">↷</button>
+      </div>
+      <div class="group tools">
+        <button class="btn tool" data-tool="select" type="button" title="Select and move (V)">Select</button>
+        <button class="btn tool" data-tool="hole" type="button" title="Punch a hole (H)">Punch</button>
+        <button class="btn tool" data-tool="fold" type="button" title="Add a fold (F)">Fold</button>
+        <button class="btn icon" id="btn-fold-dir" type="button" title="Fold direction">═</button>
+        <button class="btn tool" data-tool="join" type="button" title="Pair two edges that sew together (J)">Join</button>
+      </div>
+      <div class="group">
+        <button class="btn" id="btn-fit" type="button" title="Fit the pattern in view (0)">Fit</button>
+      </div>
+      <div class="spacer"></div>
+      <div class="group">
+        <select id="page-size" title="Paper">
+          <option value="letter">Letter</option>
+          <option value="a4">A4</option>
+        </select>
+        <button class="btn" id="btn-svg" type="button" title="Save a true-scale SVG for laser or cutting machines">SVG</button>
+        <button class="btn" id="btn-pdf" type="button" title="Save a tiled, true-scale PDF">PDF</button>
+        <button class="btn seal" id="btn-print" type="button" title="Open the template in your PDF viewer to print">Print</button>
+      </div>
+    </header>
+    <main>
+      <aside id="ledger" class="panel left"></aside>
+      <div id="stage"><canvas id="canvas" tabindex="0"></canvas></div>
+      <aside id="inspector" class="panel right"></aside>
+    </main>
+    <footer class="statusbar"><span id="status"></span><span id="info"></span></footer>
+    <div id="menu" class="menu hidden"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
