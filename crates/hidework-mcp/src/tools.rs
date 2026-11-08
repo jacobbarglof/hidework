@@ -9,7 +9,12 @@ lengths, stitch hole counts and seam checks. Tools that change the pattern retur
 screenshot:false to skip it. Fold positions are in design coordinates (before fold allowance). Seams (joins) pair edges \
 that sew together and report whether stitch lengths and hole counts match. run_drape simulates how a piece hangs in \
 different leathers and thicknesses (1 oz = 1/64 inch = 0.397 mm); simulate, sim_pin, sim_weight, sim_object and sim_props drive the live 3D window to check how the finished item hangs and what it can carry. export writes print PDFs, SVG, laser SVG/DXF, or a \
-3D-printable STL stencil.";
+3D-printable STL stencil. list_catalogue gives the stitch types (saddle, lockstitch, running, back, cross, \
+baseball, whip, blanket and four lacings), threads and laces, seam constructions (edge to edge, turned, lapped, butt, welted, \
+piped, bound, zipper), glues, edge finishes and hardware ids. make_bag builds a complete arranged bag (tote, boxedTote, \
+messenger, bucket, zipPouch). arrange_piece places a piece on the bag form in 3D (front, back, left, right, bottom, top, \
+wrapSides for a gusset, wrapAround, backFlap, handleFront, handleBack, strapSides). add_hardware with throughPieceId sets \
+matching fasteners through two layers so they hold in 3D.";
 
 fn tool(name: &str, description: &str, props: Value, required: &[&str]) -> Value {
     let mut props = props;
@@ -68,12 +73,14 @@ pub fn list() -> Vec<Value> {
         ),
         tool(
             "update_piece",
-            "Change a piece's properties. Stitch settings: stitchMarginMm (edge to stitch line), pitchMm (pricking iron spacing), holeMm.",
+            "Change a piece's properties. Stitch settings: stitchKind (see list_catalogue), stitchMarginMm (edge to stitch line), pitchMm (pricking iron or lacing chisel spacing), holeMm (hole size, or slit length = lace width for lacing), rows (1-4) and rowGapMm.",
             json!({
                 "pieceId": {"type": "string"}, "name": {"type": "string"}, "materialId": {"type": "string"}, "cutCount": {"type": "integer"},
                 "seamAllowanceMm": {"type": "number"}, "grainDeg": {"type": "number"}, "notes": {"type": "string"},
                 "x": {"type": "number"}, "y": {"type": "number"},
-                "stitchMarginMm": {"type": "number"}, "pitchMm": {"type": "number"}, "holeMm": {"type": "number"}
+                "stitchMarginMm": {"type": "number"}, "pitchMm": {"type": "number"}, "holeMm": {"type": "number"},
+                "stitchKind": {"type": "string", "enum": ["saddle", "lockstitch", "running", "backstitch", "cross", "baseball", "whip", "blanket", "laceWhip", "laceSingleLoop", "laceDoubleLoop", "laceCross"]},
+                "rows": {"type": "integer"}, "rowGapMm": {"type": "number"}
             }),
             &["pieceId"],
         ),
@@ -92,10 +99,11 @@ pub fn list() -> Vec<Value> {
         ),
         tool(
             "set_edge",
-            "Change one or more edges: stitched, curved (true makes a cubic curve; c1/c2 set its control points), skiveMm (skive zone width, 0 for none).",
+            "Change one or more edges: stitched, curved (true makes a cubic curve; c1/c2 set its control points), skiveMm (skive zone width, 0 for none), finish (raw, burnished, painted, turned = folded edge with a turn allowance turnMm, bound), crease (decorative crease line).",
             json!({
                 "pieceId": {"type": "string"}, "index": {"type": "integer"}, "indices": {"type": "array", "items": {"type": "integer"}},
-                "stitched": {"type": "boolean"}, "curved": {"type": "boolean"}, "c1": point(), "c2": point(), "skiveMm": {"type": "number"}
+                "stitched": {"type": "boolean"}, "curved": {"type": "boolean"}, "c1": point(), "c2": point(), "skiveMm": {"type": "number"},
+                "finish": {"type": "string", "enum": ["raw", "burnished", "painted", "turned", "bound"]}, "turnMm": {"type": "number"}, "crease": {"type": "boolean"}
             }),
             &["pieceId"],
         ),
@@ -123,11 +131,99 @@ pub fn list() -> Vec<Value> {
             json!({"pieceId": {"type": "string"}, "holeId": {"type": "string"}, "x": {"type": "number"}, "y": {"type": "number"}, "diameterMm": {"type": "number"}, "label": {"type": "string"}, "lengthMm": {"type": "number"}, "angleDeg": {"type": "number"}}),
             &["pieceId", "holeId"],
         ),
-        tool("add_join", "Declare that edges a and b sew together; the seam check compares their stitch lengths and hole counts.", json!({"a": edge_ref(), "b": edge_ref()}), &["a", "b"]),
+        tool(
+            "add_join",
+            "Declare that edges a and b join; the seam check compares their stitch lengths and hole counts. Give b.edges [] to sew a onto the face of piece b (patch pocket, tab). construction: edgeToEdge, turned, lapped, butt, welted, piped, bound, zipper. glue: none, contactCement, waterContact, pva, tape. Welts, piping and binding can use insertMaterialId and insertMm.",
+            json!({"a": edge_ref(), "b": edge_ref(), "construction": {"type": "string"}, "glue": {"type": "string"}, "glueWidthMm": {"type": "number"}, "insertMaterialId": {"type": "string"}, "insertMm": {"type": "number"}}),
+            &["a", "b"],
+        ),
+        tool(
+            "update_join",
+            "Change a seam's construction, glue, glue band width, or welt/piping/binding insert.",
+            json!({"joinId": {"type": "string"}, "construction": {"type": "string"}, "glue": {"type": "string"}, "glueWidthMm": {"type": "number"}, "insertMaterialId": {"type": "string"}, "insertMm": {"type": "number"}}),
+            &["joinId"],
+        ),
+        tool("list_catalogue", "Stitch types, threads and laces, seam constructions, glues, edge finishes and hardware (ids, sizes, weights, strengths).", json!({}), &[]),
+        tool(
+            "add_hardware",
+            "Set hardware into a piece at (x, y) design coordinates: rivets, Chicago screws, snaps, magnetic snaps, turn locks, grommets, feet, rings, buckles, swivel clasps, zippers, plaques, conchos (kind from list_catalogue). It adds the holes, slits or window it needs, its weight, and a 3D model. throughPieceId puts the matching half on another arranged piece at the same 3D point so they fasten in the simulation.",
+            json!({"pieceId": {"type": "string"}, "kind": {"type": "string"}, "x": {"type": "number"}, "y": {"type": "number"}, "angleDeg": {"type": "number"}, "sizeMm": {"type": "number"}, "label": {"type": "string"}, "throughPieceId": {"type": "string"}}),
+            &["pieceId", "kind", "x", "y"],
+        ),
+        tool(
+            "update_hardware",
+            "Move or change set hardware.",
+            json!({"pieceId": {"type": "string"}, "hardwareId": {"type": "string"}, "kind": {"type": "string"}, "x": {"type": "number"}, "y": {"type": "number"}, "angleDeg": {"type": "number"}, "sizeMm": {"type": "number"}, "label": {"type": "string"}}),
+            &["pieceId", "hardwareId"],
+        ),
+        tool(
+            "add_mark",
+            "Add surface work centred at (x, y): stamp (maker's mark, text), tooling (pattern floral|geometric|basketweave|border|pebble), emboss, engrave, paint (pattern = CSS colour), text, perforate (pattern 'spacing/diameter' mm, e.g. 6/2, adds the holes).",
+            json!({"pieceId": {"type": "string"}, "kind": {"type": "string", "enum": ["stamp", "tooling", "emboss", "engrave", "paint", "text", "perforate"]}, "x": {"type": "number"}, "y": {"type": "number"}, "width": {"type": "number"}, "height": {"type": "number"}, "angleDeg": {"type": "number"}, "text": {"type": "string"}, "pattern": {"type": "string"}}),
+            &["pieceId", "kind", "x", "y"],
+        ),
+        tool(
+            "update_mark",
+            "Move, resize or change surface work.",
+            json!({"pieceId": {"type": "string"}, "markId": {"type": "string"}, "kind": {"type": "string"}, "x": {"type": "number"}, "y": {"type": "number"}, "width": {"type": "number"}, "height": {"type": "number"}, "angleDeg": {"type": "number"}, "text": {"type": "string"}, "pattern": {"type": "string"}}),
+            &["pieceId", "markId"],
+        ),
+        tool(
+            "make_bag",
+            "Build a complete bag, replacing the project: every piece with matching seams, rivets through both layers, closure, pocket and feet, arranged in 3D. style tote|boxedTote|messenger|bucket|zipPouch; any other field overrides the style's defaults: widthMm, heightMm, depthMm, cornerMm, leather (preset id), thicknessMm, construction, glue, stitch, carry (none|handles|shoulder|both), handleLengthMm, handleWidthMm, strapLengthMm, strapWidthMm, closure (none|magnetic|turnLock|snap), flapMm, pocket, feet, edge (raw|burnished|painted|turned), threadColor.",
+            json!({"style": {"type": "string", "enum": ["tote", "boxedTote", "messenger", "bucket", "zipPouch"]}, "name": {"type": "string"},
+                "widthMm": {"type": "number"}, "heightMm": {"type": "number"}, "depthMm": {"type": "number"}, "cornerMm": {"type": "number"},
+                "leather": {"type": "string"}, "thicknessMm": {"type": "number"}, "construction": {"type": "string"}, "glue": {"type": "string"}, "stitch": {"type": "string"},
+                "carry": {"type": "string"}, "handleLengthMm": {"type": "number"}, "handleWidthMm": {"type": "number"}, "strapLengthMm": {"type": "number"}, "strapWidthMm": {"type": "number"},
+                "closure": {"type": "string"}, "flapMm": {"type": "number"}, "pocket": {"type": "boolean"}, "feet": {"type": "boolean"}, "edge": {"type": "string"}, "threadColor": {"type": "string"}}),
+            &["style"],
+        ),
+        tool(
+            "arrange_piece",
+            "Place a piece in 3D on the bag form (like CLO arrangement points): face flat|front|back|left|right|bottom|top|wrapSides|wrapAround|backFlap|handleFront|handleBack|strapSides; offsetX/offsetY shift it (y down); layerMm moves it out from the form (negative inside, for linings); spanMm and tabMm shape handles and straps.",
+            json!({"pieceId": {"type": "string"}, "face": {"type": "string"}, "offsetX": {"type": "number"}, "offsetY": {"type": "number"}, "layerMm": {"type": "number"}, "spanMm": {"type": "number"}, "tabMm": {"type": "number"}}),
+            &["pieceId", "face"],
+        ),
+        tool(
+            "set_form",
+            "Size of the bag form pieces are arranged on: the finished bag along its stitch lines (widthMm, depthMm, heightMm), cornerMm for rounded bottom corners, round for an oval plan.",
+            json!({"widthMm": {"type": "number"}, "depthMm": {"type": "number"}, "heightMm": {"type": "number"}, "cornerMm": {"type": "number"}, "round": {"type": "boolean"}}),
+            &[],
+        ),
+        tool(
+            "set_thread",
+            "Choose the thread or lace (id from list_catalogue), its colour (CSS), and the 3D hardware finish (brass, nickel, gunmetal, copper, black).",
+            json!({"thread": {"type": "string"}, "color": {"type": "string"}, "hardwareFinish": {"type": "string", "enum": ["brass", "nickel", "gunmetal", "copper", "black"]}}),
+            &[],
+        ),
+        tool(
+            "add_laminate",
+            "Glue two pieces face to face (lining, stiffener, doubled strap). Arrange both on the same face so they meet in 3D.",
+            json!({"a": {"type": "string"}, "b": {"type": "string"}, "glue": {"type": "string"}}),
+            &["a", "b"],
+        ),
+        tool(
+            "round_corner",
+            "Round a straight corner (vertex index) to radiusMm, like a corner punch. Seams on later edges are renumbered.",
+            json!({"pieceId": {"type": "string"}, "vertex": {"type": "integer"}, "radiusMm": {"type": "number"}}),
+            &["pieceId", "vertex"],
+        ),
+        tool(
+            "add_dart",
+            "Cut a V dart into a straight edge at fraction 'at' along it (widthMm across, depthMm deep) and join its two sides.",
+            json!({"pieceId": {"type": "string"}, "edge": {"type": "integer"}, "at": {"type": "number"}, "widthMm": {"type": "number"}, "depthMm": {"type": "number"}}),
+            &["pieceId", "edge"],
+        ),
+        tool(
+            "look_from",
+            "Turn the 3D camera to look from a direction (x, y, z toward the camera; z up, front is -y), like clicking the ViewCube.",
+            json!({"x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"}}),
+            &[],
+        ),
         tool(
             "delete_item",
-            "Delete a fold, hole, join or material by id.",
-            json!({"kind": {"type": "string", "enum": ["fold", "hole", "join", "material"]}, "pieceId": {"type": "string"}, "id": {"type": "string"}}),
+            "Delete a fold, hole, hardware, mark, join, laminate or material by id.",
+            json!({"kind": {"type": "string", "enum": ["fold", "hole", "hardware", "mark", "join", "laminate", "material"]}, "pieceId": {"type": "string"}, "id": {"type": "string"}}),
             &["kind", "id"],
         ),
         tool(
@@ -202,7 +298,7 @@ pub fn list() -> Vec<Value> {
         ),
         tool(
             "select",
-            "Select something in the app (kind none|piece|edge|vertex|hole|fold|join).",
+            "Select something in the app (kind none|piece|edge|vertex|hole|fold|hardware|mark|join).",
             json!({"kind": {"type": "string"}, "pieceId": {"type": "string"}, "index": {"type": "integer"}, "id": {"type": "string"}}),
             &["kind"],
         ),

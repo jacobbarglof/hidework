@@ -10,6 +10,8 @@ import { computedPiece, edit, notify, piece, setStatus, state, uid, version } fr
 import { colorFor } from "./textures";
 import { fmtLen, fmtThickness, fromDisp, OZ_MM, round, toDisp } from "./units";
 import { sim3d } from "./view3d";
+import { arrangeSection, bagBuilder, bomCraftSection, edgeFinishSection, finishAll, hardwareInspector, hardwareList, joinCraftSection, loadCatalogue, markInspector, marksList, projectCraftSection, stitchSection } from "./craftpanels";
+import { drape as drapeState } from "./drape";
 import type { Bom, Material, MaterialKind, MaterialStats, Physics, Piece, Scene, Side, StrapParams } from "./types";
 
 const KINDS: [MaterialKind, string][] = [
@@ -21,7 +23,7 @@ const PITCHES = [2.7, 3, 3.38, 3.85, 4, 5, 6];
 const PUNCH_SIZES = [1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 6, 8, 10];
 const DEFAULT_PHYSICS: Physics = { densityKgM3: 900, bendingModulusMpa: 20, tensileModulusMpa: 80, anisotropy: 0.85, biasStiffness: 0.9, friction: 0.6, tensileStrengthMpa: 20 };
 
-export const panel = { special: null as null | "strap" };
+export const panel = { special: null as null | "strap" | "bag" };
 
 const strapForm: StrapParams = {
   name: "Strap",
@@ -90,6 +92,10 @@ export function renderInspector(el: HTMLElement): void {
   refreshReports();
   rerender(el, () => {
     if (panel.special === "strap") return strapInspector();
+    if (panel.special === "bag") {
+      if (!drapeState.presets.length) void loadPresets().then(notify);
+      return bagBuilder(() => { panel.special = null; notify(); }, drapeState.presets);
+    }
     const s = state.sel;
     switch (s.kind) {
       case "none":
@@ -108,7 +114,12 @@ export function renderInspector(el: HTMLElement): void {
         return holeInspector(s.piece, s.id);
       case "fold":
         return foldInspector(s.piece, s.id);
+      case "hardware":
+        return hardwareInspector(s.piece, s.id, back(s.piece));
+      case "mark":
+        return markInspector(s.piece, s.id, back(s.piece));
     }
+    return [];
   });
 }
 
@@ -151,6 +162,7 @@ function projectInspector(): Node[] {
         return i;
       })()),
     ),
+    ...projectCraftSection(),
     heading("Simulation"),
     ...simReadout(),
     heading("Materials & cost"),
@@ -162,11 +174,11 @@ function projectInspector(): Node[] {
     for (const m of bom.materials) {
       t.append(h("tr", {}, h("td", {}, m.name), h("td", {}, `${m.sqft.toFixed(2)} ft²`), h("td", {}, `${m.sqftWithWaste.toFixed(2)} ft²`), h("td", {}, m.cost !== null ? `$${m.cost.toFixed(2)}` : "—")));
     }
-    out.push(t, h("p", { class: "stat-line" }, `Seams ${fmtLen(bom.seamMm, p.units)} · ${bom.stitchHoles} holes · ~${bom.threadM.toFixed(1)} m thread (4× seam)`));
+    out.push(t, h("p", { class: "stat-line" }, `Seams ${fmtLen(bom.seamMm, p.units)} · ${bom.stitchHoles} holes · ~${bom.threadM.toFixed(1)} m of thread or lace`), ...bomCraftSection(bom));
     if (bom.totalCost !== null) out.push(metric("Leather cost with waste", `$${bom.totalCost.toFixed(2)}`, true));
     if (bom.hardware.length) {
       const hw = h("table", { class: "report" }, h("tr", {}, h("th", {}, "Hardware / punch"), h("th", {}, "Size"), h("th", {}, "Qty")));
-      for (const x of bom.hardware) hw.append(h("tr", {}, h("td", {}, x.label), h("td", {}, x.slotMm > x.diameterMm ? `${x.diameterMm}×${x.slotMm} slot` : `${x.diameterMm} mm`), h("td", {}, String(x.count))));
+      for (const x of bom.hardware) hw.append(h("tr", {}, h("td", {}, x.label), h("td", {}, x.kind ? `${x.diameterMm} mm` : x.slotMm > x.diameterMm ? `${x.diameterMm}×${x.slotMm} slot` : `${x.diameterMm} mm hole`), h("td", {}, String(x.count))));
       out.push(hw);
     }
   }
@@ -192,7 +204,8 @@ function joinInspector(id: string): Node[] {
           h("tr", {}, h("td", {}, "Holes"), h("td", {}, String(rep.aHoles)), h("td", {}, String(rep.bHoles))),
         )
       : null,
-    h("p", { class: "hint" }, "In 3D, this seam is sewn: its stitch holes are tied together when you simulate."),
+    ...joinCraftSection(j),
+    h("p", { class: "hint" }, "In 3D, this seam is sewn (or glued, or zipped) when you simulate."),
     h("div", { class: "btn-row" }, button("Remove seam", () => { edit((p) => (p.joins = p.joins.filter((x) => x.id !== id))); state.sel = { kind: "none" }; notify(); }, "danger")),
   ];
 }
@@ -320,8 +333,9 @@ function pieceInspector(id: string): Node[] {
         i.setAttribute("list", "pitches");
         return i;
       })()),
-      field("Hole, mm", num("st-hole", pc.stitch.holeMm, (v) => set((x) => (x.stitch.holeMm = Math.max(0.2, v))), { step: 0.1, min: 0.2 })),
+      field((loadCatalogue()?.stitches.find((k) => k.kind === (pc.stitch.kind ?? "saddle"))?.lace ? "Slit, mm" : "Hole, mm"), num("st-hole", pc.stitch.holeMm, (v) => set((x) => (x.stitch.holeMm = Math.max(0.2, v))), { step: 0.1, min: 0.2 })),
     ),
+    ...stitchSection(pc),
     h("datalist", { id: "pitches" }, ...PITCHES.map((p) => h("option", { value: String(p) }))),
   ];
   const table = h("table", { class: "report edges" }, h("tr", {}, h("th", {}, "Edge"), h("th", {}, "Stitch"), h("th", {}, "Length"), h("th", {}, "Holes"), h("th", {}, "Skive")));
@@ -346,7 +360,10 @@ function pieceInspector(id: string): Node[] {
       { class: "btn-row" },
       button("Stitch all", () => set((x) => x.edges.forEach((e) => (e.stitched = true))), "quiet"),
       button("Stitch none", () => set((x) => x.edges.forEach((e) => (e.stitched = false))), "quiet"),
+      button("Burnish all", () => finishAll(pc, "burnished"), "quiet"),
+      button("Paint all", () => finishAll(pc, "painted"), "quiet"),
     ),
+    ...arrangeSection(pc),
     heading("Folds"),
   );
   if (!pc.folds.length) out.push(h("p", { class: "hint" }, "Fold tool (F): click where the piece bends. The pattern gains the length the outer layer needs."));
@@ -374,6 +391,12 @@ function pieceInspector(id: string): Node[] {
       ),
     );
   }
+  out.push(heading("Set hardware"));
+  const hw = hardwareList(pc, (hid) => select({ kind: "hardware", piece: id, id: hid }));
+  out.push(...(hw.length ? hw : [h("p", { class: "hint" }, "Hardware tool (K), or pick rivets, snaps, rings, buckles, locks and zips from the library.")]));
+  out.push(heading("Surface work"));
+  const mk = marksList(pc, (mid) => select({ kind: "mark", piece: id, id: mid }));
+  out.push(...(mk.length ? mk : [h("p", { class: "hint" }, "Mark tool (E): stamps, tooling, embossing, engraving, paint, lettering and perforation.")]));
   out.push(h("div", { class: "btn-row spaced" }, button("Delete piece", () => deletePiece(id), "danger")));
   return out;
 }
@@ -429,7 +452,18 @@ function edgeInspector(id: string, i: number): Node[] {
       e.stitched ? h("tr", {}, h("td", {}, "Stitch line"), h("td", {}, rep ? fmtLen(rep.stitchLengthMm, u) : "")) : null,
       e.stitched ? h("tr", {}, h("td", {}, "Holes"), h("td", {}, rep ? String(rep.holeCount) : "")) : null,
     ),
-    h("div", { class: "btn-row" }, button(e.type === "line" ? "Make curved" : "Make straight", () => edit(() => toggleCurve(pc, i)), "quiet")),
+    h("div", { class: "btn-row" }, button(e.type === "line" ? "Make curved" : "Make straight", () => edit(() => toggleCurve(pc, i)), "quiet"), e.type === "line" ? button("Add dart", async () => {
+      const [next, pair] = await api.addDart(pc, i, 0.5, 20, 40);
+      edit((p) => {
+        const k = p.pieces.findIndex((x) => x.id === id);
+        p.pieces[k] = { ...next, id };
+        // Three edges were inserted after this one.
+        for (const j of p.joins) for (const side of [j.a, j.b]) if (side.pieceId === id) side.edges = side.edges.map((x) => (x > i ? x + 3 : x));
+        p.joins.push({ id: uid("j"), a: { pieceId: id, edges: [pair[0]] }, b: { pieceId: id, edges: [pair[1]] } });
+      });
+      setStatus("Dart added and its two sides joined. Drag its points to shape it.");
+    }, "quiet") : null),
+    ...edgeFinishSection(pc, i),
     heading("Gusset from this edge"),
     h(
       "div",
@@ -458,6 +492,24 @@ function vertexInspector(id: string, i: number): Node[] {
       field(`Y, ${unitLabel()}`, len("v-y", v.y, (y) => edit(() => (pc.vertices[i].y = y)))),
     ),
     h("p", { class: "hint" }, "Before fold allowance, from the piece origin."),
+    (() => {
+      const r = num("v-round", 8, () => {}, { step: 1, min: 1 });
+      return h("div", { class: "btn-row" }, field("Corner radius", r), button("Round corner", async () => {
+        try {
+          const next = await api.roundCorner(pc, i, parseFloat(r.value) || 8);
+          edit((p) => {
+            const k = p.pieces.findIndex((x) => x.id === id);
+            p.pieces[k] = { ...next, id };
+            // Edges after the corner moved up by one: keep seams pointing at the same edges.
+            for (const j of p.joins) for (const side of [j.a, j.b]) if (side.pieceId === id) side.edges = side.edges.map((e) => (e >= i ? e + 1 : e));
+          });
+          state.sel = { kind: "piece", piece: id };
+          notify();
+        } catch (e) {
+          setStatus(String(e));
+        }
+      }, "quiet"));
+    })(),
     h("div", { class: "btn-row" }, button("Delete point", () => { let ok = false; edit((p) => (ok = deleteVertex(p, pc, i))); if (ok) state.sel = { kind: "piece", piece: id }; notify(); }, "danger")),
   ];
 }

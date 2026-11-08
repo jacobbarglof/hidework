@@ -12,6 +12,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { generation, notify, setStatus, state, uid, version } from "./store";
 import { colorFor, finishFor, surfaces } from "./textures";
 import type { Prop, SimInfo, SimObject, SimStatus, Shape } from "./simtypes";
+import { createViewCube, groundGrid, studioBackground, type ViewCube } from "./scenery";
+import { hardwareMesh, markTextures, stitchMeshes, updateDecor, updateStitches, type Metal, type StitchMeshes } from "./fittings";
 
 export type Tool3d = "orbit" | "move" | "pin" | "weight" | "object";
 
@@ -31,6 +33,7 @@ export const sim3d = {
   liftMm: 0,
   frames: 0,
   error: "",
+  metal: "brass" as Metal,
 };
 
 export const OBJECT_PRESETS: Record<string, { name: string; shape: Shape; grams: number; color: string }> = {
@@ -61,14 +64,17 @@ interface PieceMeshes {
   grain: THREE.Mesh;
   flesh: THREE.Mesh;
   heat: THREE.Mesh;
-  rim: THREE.Mesh;
-  rimEdges: [number, number][];
+  /** Cut edges, one mesh per edge finish. */
+  rims: { mesh: THREE.Mesh; edges: [number, number][] }[];
+  overlay: THREE.Mesh | null;
   halfT: number;
 }
 let pieces: PieceMeshes[] = [];
 let shared: THREE.BufferAttribute | null = null;
 let normals: Float32Array | null = null;
-let stitchMesh: THREE.InstancedMesh | null = null;
+let stitchSet: StitchMeshes | null = null;
+const decor = new THREE.Group();
+let viewCube: ViewCube | null = null;
 let hardware: THREE.Group = new THREE.Group();
 let objectMeshes = new Map<string, THREE.Mesh>();
 let markerGroup = new THREE.Group();
@@ -89,7 +95,8 @@ export function initView3d(el: HTMLElement): void {
   renderer.toneMappingExposure = 1.05;
   el.appendChild(renderer.domElement);
   scene = new THREE.Scene();
-  scene.background = gradientBackground();
+  scene.background = studioBackground();
+  scene.backgroundIntensity = 1;
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
   scene.environmentIntensity = 0.8;
@@ -100,24 +107,22 @@ export function initView3d(el: HTMLElement): void {
   controls.enableDamping = true;
   // CLO style: right drag orbits, middle drag pans, wheel zooms; left is for tools.
   controls.mouseButtons = { LEFT: null as unknown as THREE.MOUSE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
-  sun = new THREE.DirectionalLight("#fff4e0", 2.4);
+  sun = new THREE.DirectionalLight("#ffffff", 2.3);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.bias = -0.0004;
   sun.shadow.radius = 4;
   scene.add(sun, sun.target);
-  const fill = new THREE.DirectionalLight("#cfe0ff", 0.5);
+  const fill = new THREE.DirectionalLight("#e4eeff", 0.7);
   fill.position.set(-400, 300, 200);
   scene.add(fill);
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(20000, 20000), new THREE.ShadowMaterial({ opacity: 0.28 }));
+  scene.add(new THREE.HemisphereLight("#f2f5fa", "#b9b2a8", 0.55));
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(20000, 20000), new THREE.ShadowMaterial({ opacity: 0.2 }));
   ground.receiveShadow = true;
   scene.add(ground);
-  const grid = new THREE.GridHelper(2000, 40, 0x6b4a2c, 0x4a3420);
-  grid.rotation.x = Math.PI / 2;
-  (grid.material as THREE.Material).transparent = true;
-  (grid.material as THREE.Material).opacity = 0.35;
-  scene.add(grid);
+  scene.add(groundGrid());
   scene.add(cloth, extras, propGroup, markerGroup);
+  extras.add(decor);
   extras.add(hardware);
   composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
@@ -129,29 +134,15 @@ export function initView3d(el: HTMLElement): void {
   new ResizeObserver(resize).observe(el);
   resize();
   bindPointer();
+  viewCube = createViewCube(el, (dir) => lookFrom(dir), () => viewPreset("iso"));
   const loop = () => {
     requestAnimationFrame(loop);
     controls.update();
     if (sim3d.running && !stepping && positions) void step();
     composer.render();
+    viewCube?.sync(camera, controls.target);
   };
   loop();
-}
-
-function gradientBackground(): THREE.Texture {
-  const c = document.createElement("canvas");
-  c.width = 4;
-  c.height = 256;
-  const g = c.getContext("2d")!;
-  const grd = g.createLinearGradient(0, 0, 0, 256);
-  grd.addColorStop(0, "#4a3a2c");
-  grd.addColorStop(0.6, "#2b2119");
-  grd.addColorStop(1, "#1a140f");
-  g.fillStyle = grd;
-  g.fillRect(0, 0, 4, 256);
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
 }
 
 function resize(): void {
@@ -170,6 +161,8 @@ function resize(): void {
 export async function rebuild(keepRunning = false): Promise<void> {
   if (sim3d.building) return;
   sim3d.building = true;
+  // The pattern this build is made from; edits made while it runs leave it out of date.
+  const startVersion = version;
   sim3d.error = "";
   const was = sim3d.running;
   sim3d.running = false;
@@ -191,7 +184,7 @@ export async function rebuild(keepRunning = false): Promise<void> {
       spec: { foldAngleDeg: sim3d.foldAngle, props: sim3d.props, liftMm: sim3d.liftMm },
     });
     sim3d.info = info;
-    sim3d.builtVersion = version;
+    sim3d.builtVersion = startVersion;
     sim3d.frames = 0;
     build(info);
     if (keep) {
@@ -216,7 +209,8 @@ export async function rebuild(keepRunning = false): Promise<void> {
 function build(info: SimInfo): void {
   for (const p of pieces) {
     p.geo.dispose();
-    p.rim.geometry.dispose();
+    for (const r of p.rims) r.mesh.geometry.dispose();
+    p.overlay?.geometry.dispose();
   }
   cloth.clear();
   pieces = [];
@@ -252,14 +246,45 @@ function build(info: SimInfo): void {
       m.receiveShadow = true;
       cloth.add(m);
     }
-    const rimEdges = info.boundary.filter(([a]) => a >= pi.vertexStart && a < pi.vertexStart + pi.vertexCount);
-    const rimGeo = new THREE.BufferGeometry();
-    rimGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(rimEdges.length * 6 * 3), 3));
-    const rim = new THREE.Mesh(rimGeo, surf.edge);
-    rim.castShadow = true;
-    cloth.add(rim);
+    // Cut edges, grouped by finish: raw, burnished, painted, turned or bound.
+    const groups = new Map<string, [number, number][]>();
+    info.boundary.forEach(([a, b], k) => {
+      if (a < pi.vertexStart || a >= pi.vertexStart + pi.vertexCount) return;
+      const f = info.boundaryFinish?.[k] ?? "raw";
+      if (!groups.has(f)) groups.set(f, []);
+      groups.get(f)!.push([a, b]);
+    });
+    const rims: PieceMeshes["rims"] = [];
+    for (const [finish, edges] of groups) {
+      const rimGeo = new THREE.BufferGeometry();
+      rimGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(edges.length * 6 * 3), 3));
+      const rim = new THREE.Mesh(rimGeo, edgeMaterial(finish, color, surf));
+      rim.castShadow = true;
+      cloth.add(rim);
+      rims.push({ mesh: rim, edges });
+    }
+    // Stamps, tooling, paint and lettering drawn onto the grain.
+    let overlay: THREE.Mesh | null = null;
+    const cp = state.computed?.pieces.find((c) => c.id === pi.id);
+    const tex = cp ? markTextures(cp) : null;
+    if (tex) {
+      const ouv = new Float32Array(n * 2);
+      for (let i = pi.vertexStart; i < pi.vertexStart + pi.vertexCount; i++) {
+        ouv[i * 2] = (info.rest[i * 2] - tex.min.x) / tex.size.x;
+        ouv[i * 2 + 1] = 1 - (info.rest[i * 2 + 1] - tex.min.y) / tex.size.y;
+      }
+      const og = new THREE.BufferGeometry();
+      og.setAttribute("position", shared);
+      og.setAttribute("normal", normalAttr);
+      og.setAttribute("uv", new THREE.BufferAttribute(ouv, 2));
+      og.setIndex(info.indices.slice(pi.indexStart, pi.indexStart + pi.indexCount));
+      const om = new THREE.MeshStandardMaterial({ map: tex.map, bumpMap: tex.bump, bumpScale: 1.2, transparent: true, roughness: 0.7, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
+      overlay = new THREE.Mesh(og, offsetMaterial(om, -halfT - 0.06));
+      overlay.renderOrder = 2;
+      cloth.add(overlay);
+    }
     grain.userData.piece = flesh.userData.piece = heat.userData.piece = pi.id;
-    pieces.push({ geo, grain, flesh, heat, rim, rimEdges, halfT });
+    pieces.push({ geo, grain, flesh, heat, rims, overlay, halfT });
   }
   buildStitches(info);
   buildHardware(info);
@@ -276,21 +301,35 @@ function offsetMaterial(base: THREE.Material, offset: number): THREE.Material {
   return m;
 }
 
-function buildStitches(info: SimInfo): void {
-  if (stitchMesh) {
-    extras.remove(stitchMesh);
-    stitchMesh.geometry.dispose();
+/** Material for a cut edge by its finish. */
+function edgeMaterial(finish: string, color: string, surf: ReturnType<typeof surfaces>): THREE.Material {
+  const c = new THREE.Color(color);
+  switch (finish) {
+    case "burnished":
+      return new THREE.MeshPhysicalMaterial({ color: c.clone().multiplyScalar(0.42), roughness: 0.28, clearcoat: 0.6, clearcoatRoughness: 0.35 });
+    case "painted":
+      return new THREE.MeshPhysicalMaterial({ color: c.clone().multiplyScalar(0.18), roughness: 0.35, clearcoat: 0.8, clearcoatRoughness: 0.25 });
+    case "turned":
+      return surf.grain;
+    case "bound":
+      return new THREE.MeshStandardMaterial({ color: c.clone().multiplyScalar(0.55), roughness: 0.55 });
+    default:
+      return surf.edge;
   }
-  let count = 0;
-  for (const line of info.stitches) count += (line.closed ? line.holes.length : Math.max(0, line.holes.length - 1)) * 2;
-  const geo = new THREE.CylinderGeometry(0.42, 0.42, 1, 6, 1);
-  geo.rotateX(Math.PI / 2); // along z, scaled to length
+}
+
+function buildStitches(info: SimInfo): void {
+  if (stitchSet) {
+    extras.remove(stitchSet.thread, stitchSet.lace);
+    stitchSet.thread.geometry.dispose();
+    stitchSet.lace.geometry.dispose();
+  }
   const color = state.project.threadColor ?? "#efe4c8";
-  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.6 });
-  stitchMesh = new THREE.InstancedMesh(geo, mat, Math.max(1, count));
-  stitchMesh.castShadow = true;
-  stitchMesh.count = count;
-  extras.add(stitchMesh);
+  // Lace in a darker tone of the first leather.
+  const m0 = state.project.materials[0];
+  const lace = new THREE.Color(m0?.color ?? colorFor(m0?.kind ?? "leather", m0?.name ?? "")).multiplyScalar(0.55);
+  stitchSet = stitchMeshes(info, color, `#${lace.getHexString()}`);
+  extras.add(stitchSet.thread, stitchSet.lace);
 }
 
 const BRASS = new THREE.MeshStandardMaterial({ color: "#c9a24a", metalness: 1, roughness: 0.28 });
@@ -300,6 +339,13 @@ function buildHardware(info: SimInfo): void {
   extras.remove(hardware);
   hardware = new THREE.Group();
   for (const hw of info.hardware) {
+    if (hw.kind) {
+      const piece = info.pieces.find((p) => p.id === hw.pieceId);
+      const g = hardwareMesh(hw.kind, hw.diameterMm, piece?.thicknessMm ?? 1.5, sim3d.metal);
+      g.userData = { hw, kind: "set" };
+      hardware.add(g);
+      continue;
+    }
     const fastener = /rivet|snap|screw|stud|fasten/i.test(hw.label);
     const r = hw.diameterMm / 2;
     if (fastener) {
@@ -399,8 +445,12 @@ function applyPositions(buf: Float32Array): void {
     p.geo.computeBoundingSphere();
     updateRim(p);
   }
-  updateStitches();
+  if (stitchSet) {
+    stitchSet.thread.visible = stitchSet.lace.visible = sim3d.stitches;
+    updateStitches(surfaceAccess, stitchSet);
+  }
   updateHardware();
+  if (decorTick++ % 3 === 0) refreshDecor();
   // Objects follow the cloth positions in the same buffer.
   const objs = sim3d.status?.objects ?? [];
   objs.forEach((o, k) => {
@@ -411,53 +461,53 @@ function applyPositions(buf: Float32Array): void {
 }
 
 function updateRim(p: PieceMeshes): void {
-  const arr = (p.rim.geometry.getAttribute("position") as THREE.BufferAttribute).array as Float32Array;
-  let k = 0;
-  const put = (i: number, s: number) => {
-    arr[k++] = positions![i * 3] + normals![i * 3] * s;
-    arr[k++] = positions![i * 3 + 1] + normals![i * 3 + 1] * s;
-    arr[k++] = positions![i * 3 + 2] + normals![i * 3 + 2] * s;
-  };
-  for (const [a, b] of p.rimEdges) {
-    put(a, -p.halfT); put(b, -p.halfT); put(b, p.halfT);
-    put(a, -p.halfT); put(b, p.halfT); put(a, p.halfT);
-  }
-  p.rim.geometry.getAttribute("position").needsUpdate = true;
-  p.rim.geometry.computeVertexNormals();
-  p.rim.geometry.computeBoundingSphere();
-}
-
-const tmpM = new THREE.Matrix4();
-const zAxis = new THREE.Vector3(0, 0, 1);
-
-function updateStitches(): void {
-  const info = sim3d.info;
-  if (!stitchMesh || !info) return;
-  stitchMesh.visible = sim3d.stitches;
-  let k = 0;
-  for (const line of info.stitches) {
-    const piece = info.pieces.find((p) => p.id === line.pieceId);
-    const half = (piece?.thicknessMm ?? 1) / 2 + 0.35;
-    const m = line.holes.length;
-    const segs = line.closed ? m : m - 1;
-    const pts = line.holes.map((h) => surfacePoint(h.tri, h.bary));
-    for (let s = 0; s < segs; s++) {
-      const a = pts[s];
-      const b = pts[(s + 1) % m];
-      for (const side of [half, -half]) {
-        const pa = a.p.clone().addScaledVector(a.n, side);
-        const pb = b.p.clone().addScaledVector(b.n, side);
-        const dir = pb.clone().sub(pa);
-        const len = Math.max(0.1, dir.length() - 0.9);
-        const q = new THREE.Quaternion().setFromUnitVectors(zAxis, dir.normalize());
-        tmpM.compose(pa.clone().add(pb).multiplyScalar(0.5), q, new THREE.Vector3(1, 1, len));
-        stitchMesh.setMatrixAt(k++, tmpM);
-      }
+  for (const r of p.rims) {
+    const arr = (r.mesh.geometry.getAttribute("position") as THREE.BufferAttribute).array as Float32Array;
+    let k = 0;
+    const put = (i: number, s: number) => {
+      arr[k++] = positions![i * 3] + normals![i * 3] * s;
+      arr[k++] = positions![i * 3 + 1] + normals![i * 3 + 1] * s;
+      arr[k++] = positions![i * 3 + 2] + normals![i * 3 + 2] * s;
+    };
+    for (const [a, b] of r.edges) {
+      put(a, -p.halfT); put(b, -p.halfT); put(b, p.halfT);
+      put(a, -p.halfT); put(b, p.halfT); put(a, p.halfT);
     }
+    r.mesh.geometry.getAttribute("position").needsUpdate = true;
+    r.mesh.geometry.computeVertexNormals();
+    r.mesh.geometry.computeBoundingSphere();
   }
-  stitchMesh.instanceMatrix.needsUpdate = true;
-  stitchMesh.computeBoundingSphere();
+  if (p.overlay) p.overlay.geometry.computeBoundingSphere();
 }
+
+let decorTick = 0;
+const DECOR_MATS = {
+  welt: new THREE.MeshStandardMaterial({ color: "#3a2416", roughness: 0.6 }),
+  zip: new THREE.MeshStandardMaterial({ color: "#1e1d1c", roughness: 0.8 }),
+  teeth: new THREE.MeshStandardMaterial({ color: "#b9bcc2", metalness: 1, roughness: 0.3 }),
+};
+
+function refreshDecor(): void {
+  const info = sim3d.info;
+  if (!info || !positions || !normals) return;
+  updateDecor(decor, info, positions, normals, DECOR_MATS, (mid) => {
+    const m = state.project.materials.find((x) => x.id === mid);
+    const c = new THREE.Color(m?.color ?? colorFor(m?.kind ?? "leather", m?.name ?? "")).multiplyScalar(0.75);
+    return new THREE.MeshStandardMaterial({ color: c, roughness: 0.55 });
+  });
+}
+
+/** What the stitch builder needs to know about the cloth right now. */
+const surfaceAccess = {
+  get info(): SimInfo {
+    return sim3d.info!;
+  },
+  at: (sp: { tri: number; bary: [number, number, number] }) => surfacePoint(sp.tri, sp.bary),
+  thickness: (pid: string) => sim3d.info?.pieces.find((p) => p.id === pid)?.thicknessMm ?? 1.5,
+  laceWidth: (pid: string) => state.project.pieces.find((p) => p.id === pid)?.stitch.holeMm ?? 3,
+};
+
+const zAxis = new THREE.Vector3(0, 0, 1);
 
 function updateHardware(): void {
   const info = sim3d.info;
@@ -467,6 +517,19 @@ function updateHardware(): void {
     const piece = info.pieces.find((p) => p.id === hw.pieceId);
     const half = (piece?.thicknessMm ?? 1) / 2;
     const { p, n } = surfacePoint(hw.at.tri, hw.at.bary);
+    if (kind === "set") {
+      // Local +z out of the grain side (the flesh normal is n), +x along the hardware's angle.
+      const out = n.clone().negate();
+      let xdir = new THREE.Vector3(1, 0, 0);
+      if (hw.toward) xdir = surfacePoint(hw.toward.tri, hw.toward.bary).p.sub(p);
+      xdir.addScaledVector(out, -xdir.dot(out));
+      if (xdir.lengthSq() < 1e-8) xdir = new THREE.Vector3(0, 0, 1).cross(out);
+      xdir.normalize();
+      const ydir = new THREE.Vector3().crossVectors(out, xdir);
+      m.position.copy(p).addScaledVector(out, half);
+      m.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xdir, ydir, out));
+      return;
+    }
     const face = kind === "cap" ? -(half + 0.8) : -(half + 0.05);
     m.position.copy(p).addScaledVector(n, face);
     const q = new THREE.Quaternion().setFromUnitVectors(kind === "cap" ? new THREE.Vector3(0, 1, 0) : zAxis, kind === "cap" ? n : n.clone().negate());
@@ -609,6 +672,24 @@ export function frameView(): void {
   Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 1, far: r * 8 });
   sun.shadow.camera.updateProjectionMatrix();
   gtao.updateGtaoMaterial({ radius: r * 0.05 });
+}
+
+/** Look at the target from a direction (unit vector toward the camera), keeping the distance. */
+export function lookFrom(dir: THREE.Vector3): void {
+  const t = controls.target.clone();
+  const d = camera.position.distanceTo(t);
+  const v = dir.clone().normalize();
+  // Straight down or up: nudge so z-up orbiting stays well defined.
+  if (Math.abs(v.z) > 0.999) v.set(0.001, -0.001, Math.sign(v.z));
+  camera.position.copy(t).add(v.multiplyScalar(d));
+}
+
+/** Hardware colour: brass, nickel, gunmetal, copper or black. */
+export function setMetal(m: Metal): void {
+  sim3d.metal = m;
+  if (sim3d.info) buildHardware(sim3d.info);
+  if (positions) updateHardware();
+  notify();
 }
 
 export function viewPreset(name: "front" | "back" | "top" | "side" | "iso"): void {

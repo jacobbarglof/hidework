@@ -7,7 +7,8 @@ import { captureCanvas, fitView, zoomBy } from "./canvas";
 import { captureDrape, defaultsFor, drape, loadPresets, setDrapeVisible } from "./drape";
 import { deleteVertex, duplicatePiece, insertVertex, mirrorPiece, rectPiece, rotatePiece, roundedRectPiece, toggleCurve } from "./ops";
 import { addStrap, closeFabricTest, deletePiece, makeGusset, openFabricTest, panel } from "./panels";
-import { OBJECT_PRESETS, bounds, capture3d, dropObject, frameView, needsRebuild, rebuild, refreshStatus, removeSceneItem, resetSim, runFrames, setHeat, setProps, sim3d, viewPreset } from "./view3d";
+import { OBJECT_PRESETS, bounds, capture3d, dropObject, frameView, lookFrom, needsRebuild, rebuild, refreshStatus, removeSceneItem, resetSim, runFrames, setHeat, setMetal, setProps, sim3d, viewPreset } from "./view3d";
+import * as THREE from "three";
 import { invoke } from "@tauri-apps/api/core";
 import type { Prop } from "./simtypes";
 import { edit, notify, piece, redo, setProject, state, uid, undo, whenComputed, type Sel } from "./store";
@@ -60,15 +61,23 @@ function summary(includeProject: boolean): unknown {
           type: e.type,
           stitched: e.stitched,
           skiveMm: e.skiveMm ?? 0,
+          finish: e.finish ?? "raw",
+          crease: !!e.crease,
           lengthMm: cp ? +cp.edges[i].lengthMm.toFixed(2) : null,
           stitchLengthMm: cp ? +cp.edges[i].stitchLengthMm.toFixed(2) : null,
           holes: cp ? cp.edges[i].holeCount : null,
         })),
         folds: p.folds.map((f) => ({ ...f, allowanceMm: cp?.folds.find((g) => g.id === f.id)?.shiftMm ?? null })),
         holes: p.holes,
+        hardware: p.hardware ?? [],
+        marks: p.marks ?? [],
+        place: p.place ?? { face: "flat" },
       };
     }),
-    seams: proj.joins.map((j) => ({ ...j, check: c?.joins.find((r) => r.id === j.id) ?? null })),
+    seams: proj.joins.map((j) => ({ ...j, construction: j.construction ?? "edgeToEdge", glue: j.glue ?? "none", check: c?.joins.find((r) => r.id === j.id) ?? null })),
+    thread: proj.thread ?? "poly-0.6",
+    form: proj.form ?? null,
+    laminates: proj.laminates ?? [],
     warnings: c?.warnings ?? [],
     project: includeProject ? proj : undefined,
   };
@@ -165,6 +174,9 @@ const handlers: Record<string, Handler> = {
       if (p.stitchMarginMm !== undefined) x.stitch.marginMm = Number(p.stitchMarginMm);
       if (p.pitchMm !== undefined) x.stitch.pitchMm = Number(p.pitchMm);
       if (p.holeMm !== undefined) x.stitch.holeMm = Number(p.holeMm);
+      if (p.stitchKind !== undefined) x.stitch.kind = p.stitchKind;
+      if (p.rows !== undefined) x.stitch.rows = Math.max(1, Math.min(4, Math.round(p.rows)));
+      if (p.rowGapMm !== undefined) x.stitch.rowGapMm = Number(p.rowGapMm);
     });
     return { pieceId: x.id };
   },
@@ -216,6 +228,9 @@ const handlers: Record<string, Handler> = {
         const e = need(x.edges[i], `Edge ${i}`);
         if (p.stitched !== undefined) e.stitched = !!p.stitched;
         if (p.skiveMm !== undefined) e.skiveMm = Math.max(0, Number(p.skiveMm));
+        if (p.finish !== undefined) e.finish = p.finish;
+        if (p.turnMm !== undefined) e.turnMm = Math.max(0, Number(p.turnMm));
+        if (p.crease !== undefined) e.crease = !!p.crease;
         if (p.curved !== undefined && p.curved !== (e.type === "cubic")) toggleCurve(x, i);
         const e2 = x.edges[i];
         if (e2.type === "cubic") {
@@ -269,13 +284,14 @@ const handlers: Record<string, Handler> = {
       for (const e of side.edges ?? []) need(x.edges[e], `Edge ${e} of ${x.name}`);
     }
     const id = uid("j");
-    edit((proj) => proj.joins.push({ id, a: { pieceId: p.a.pieceId, edges: p.a.edges }, b: { pieceId: p.b.pieceId, edges: p.b.edges } }));
+    edit((proj) => proj.joins.push({ id, a: { pieceId: p.a.pieceId, edges: p.a.edges }, b: { pieceId: p.b.pieceId, edges: p.b.edges ?? [] }, construction: p.construction, glue: p.glue, glueWidthMm: p.glueWidthMm, insertMaterialId: p.insertMaterialId ?? null, insertMm: p.insertMm }));
     return { joinId: id };
   },
   delete_item: (p) => {
     const id = String(p.id);
     edit((proj) => {
       if (p.kind === "join") proj.joins = proj.joins.filter((j) => j.id !== id);
+      else if (p.kind === "laminate") proj.laminates = (proj.laminates ?? []).filter((l) => l.id !== id);
       else if (p.kind === "material") {
         if (proj.pieces.some((x) => x.materialId === id)) throw new Error("That material is still used by a piece.");
         proj.materials = proj.materials.filter((m) => m.id !== id);
@@ -283,6 +299,8 @@ const handlers: Record<string, Handler> = {
         for (const x of proj.pieces) {
           if (p.kind === "fold") x.folds = x.folds.filter((f) => f.id !== id);
           if (p.kind === "hole") x.holes = x.holes.filter((f) => f.id !== id);
+          if (p.kind === "hardware") x.hardware = (x.hardware ?? []).filter((f) => f.id !== id);
+          if (p.kind === "mark") x.marks = (x.marks ?? []).filter((f) => f.id !== id);
         }
     });
     return { deleted: id };
@@ -525,13 +543,172 @@ const handlers: Record<string, Handler> = {
     for (let i = 0; i < n; i++) (p.op === "redo" ? redo : undo)();
     return { done: n };
   },
+  list_catalogue: async () => api.catalogue(),
+  update_join: (p) => {
+    const j = need(state.project.joins.find((x) => x.id === p.joinId), `Seam ${p.joinId}`);
+    edit(() => {
+      if (p.construction !== undefined) j.construction = p.construction;
+      if (p.glue !== undefined) j.glue = p.glue;
+      if (p.glueWidthMm !== undefined) j.glueWidthMm = Number(p.glueWidthMm);
+      if (p.insertMaterialId !== undefined) j.insertMaterialId = p.insertMaterialId || null;
+      if (p.insertMm !== undefined) j.insertMm = Number(p.insertMm);
+    });
+    return { joinId: j.id };
+  },
+  add_hardware: async (p) => {
+    const x = pc(p);
+    const cat = await api.catalogue();
+    if (!cat.hardware.some((h) => h.id === p.kind)) throw new Error(`Unknown hardware ${p.kind}. Use list_catalogue.`);
+    const id = uid("hw");
+    const at = { x: Number(p.x), y: Number(p.y) };
+    edit(() => (x.hardware = [...(x.hardware ?? []), { id, kind: String(p.kind), at, angleDeg: Number(p.angleDeg ?? 0), sizeMm: Number(p.sizeMm ?? 0), label: String(p.label ?? "") }]));
+    let through: string | null = null;
+    if (p.throughPieceId) {
+      // The matching half on the piece it fastens to, at the same place in 3D.
+      await whenComputed();
+      const world = await api.arrangePoint(state.project, x.id, at);
+      const other = need(piece(String(p.throughPieceId)), `Piece ${p.throughPieceId}`);
+      const oat = await api.arrangeInverse(state.project, other.id, world);
+      edit(() => (other.hardware = [...(other.hardware ?? []), { id: `${id}b`, kind: String(p.kind), at: oat, angleDeg: Number(p.angleDeg ?? 0), sizeMm: Number(p.sizeMm ?? 0) }]));
+      through = `${id}b`;
+    }
+    state.sel = { kind: "hardware", piece: x.id, id };
+    return { hardwareId: id, matchingId: through };
+  },
+  update_hardware: (p) => {
+    const x = pc(p);
+    const hw = need((x.hardware ?? []).find((y) => y.id === p.hardwareId), `Hardware ${p.hardwareId}`);
+    edit(() => {
+      if (p.kind !== undefined) hw.kind = String(p.kind);
+      if (p.x !== undefined) hw.at.x = Number(p.x);
+      if (p.y !== undefined) hw.at.y = Number(p.y);
+      if (p.angleDeg !== undefined) hw.angleDeg = Number(p.angleDeg);
+      if (p.sizeMm !== undefined) hw.sizeMm = Number(p.sizeMm);
+      if (p.label !== undefined) hw.label = String(p.label);
+    });
+    return { hardwareId: hw.id };
+  },
+  add_mark: (p) => {
+    const x = pc(p);
+    const id = uid("mk");
+    edit(() => (x.marks = [...(x.marks ?? []), { id, kind: p.kind ?? "stamp", center: { x: Number(p.x), y: Number(p.y) }, size: { x: Number(p.width ?? 30), y: Number(p.height ?? 15) }, angleDeg: Number(p.angleDeg ?? 0), text: String(p.text ?? ""), pattern: String(p.pattern ?? "") }]));
+    state.sel = { kind: "mark", piece: x.id, id };
+    return { markId: id };
+  },
+  update_mark: (p) => {
+    const x = pc(p);
+    const mk = need((x.marks ?? []).find((y) => y.id === p.markId), `Mark ${p.markId}`);
+    edit(() => {
+      if (p.kind !== undefined) mk.kind = p.kind;
+      if (p.x !== undefined) mk.center.x = Number(p.x);
+      if (p.y !== undefined) mk.center.y = Number(p.y);
+      if (p.width !== undefined) mk.size.x = Number(p.width);
+      if (p.height !== undefined) mk.size.y = Number(p.height);
+      if (p.angleDeg !== undefined) mk.angleDeg = Number(p.angleDeg);
+      if (p.text !== undefined) mk.text = String(p.text);
+      if (p.pattern !== undefined) mk.pattern = String(p.pattern);
+    });
+    return { markId: mk.id };
+  },
+  make_bag: async (p) => {
+    await settledBuild();
+    const style = p.style ?? "tote";
+    const base = await api.bagDefaults(style);
+    const params = { ...base, ...p, style };
+    delete (params as Params).screenshot;
+    setProject(await api.makeBag(params), null);
+    await whenComputed();
+    lastView = "3d";
+    await settledBuild();
+    await rebuild();
+    await runFrames(60);
+    frameView();
+    return { pieces: state.project.pieces.map((x) => ({ id: x.id, name: x.name, face: x.place?.face ?? "flat" })), seams: state.project.joins.length };
+  },
+  arrange_piece: async (p) => {
+    const x = pc(p);
+    edit(() => {
+      const pl = { face: "flat" as const, ...(x.place ?? {}) } as NonNullable<Piece["place"]>;
+      if (p.face !== undefined) pl.face = p.face;
+      if (p.offsetX !== undefined || p.offsetY !== undefined) pl.offset = { x: Number(p.offsetX ?? pl.offset?.x ?? 0), y: Number(p.offsetY ?? pl.offset?.y ?? 0) };
+      if (p.layerMm !== undefined) pl.layerMm = Number(p.layerMm);
+      if (p.spanMm !== undefined) pl.spanMm = Number(p.spanMm);
+      if (p.tabMm !== undefined) pl.tabMm = Number(p.tabMm);
+      x.place = pl;
+    });
+    await whenComputed();
+    lastView = "3d";
+    await rebuild();
+    return { pieceId: x.id, place: x.place };
+  },
+  set_form: async (p) => {
+    edit((proj) => {
+      const f = { widthMm: 300, depthMm: 100, heightMm: 320, ...(proj.form ?? {}) };
+      for (const k of ["widthMm", "depthMm", "heightMm", "cornerMm"] as const) if (p[k] !== undefined) f[k] = Number(p[k]);
+      if (p.round !== undefined) f.round = !!p.round;
+      proj.form = f;
+    });
+    await whenComputed();
+    lastView = "3d";
+    await rebuild();
+    return { form: state.project.form };
+  },
+  set_thread: (p) => {
+    edit((proj) => {
+      if (p.thread !== undefined) proj.thread = String(p.thread);
+      if (p.color !== undefined) proj.threadColor = String(p.color);
+    });
+    if (p.hardwareFinish) setMetal(p.hardwareFinish);
+    return { thread: state.project.thread, color: state.project.threadColor };
+  },
+  add_laminate: (p) => {
+    need(piece(String(p.a)), `Piece ${p.a}`);
+    need(piece(String(p.b)), `Piece ${p.b}`);
+    const id = uid("lam");
+    edit((proj) => (proj.laminates = [...(proj.laminates ?? []), { id, a: String(p.a), b: String(p.b), glue: p.glue ?? "contactCement" }]));
+    return { laminateId: id };
+  },
+  round_corner: async (p) => {
+    const x = pc(p);
+    const i = Number(p.vertex);
+    const next = await api.roundCorner(x, i, Number(p.radiusMm ?? 8));
+    edit((proj) => {
+      const k = proj.pieces.findIndex((y) => y.id === x.id);
+      proj.pieces[k] = { ...next, id: x.id };
+      for (const j of proj.joins) for (const side of [j.a, j.b]) if (side.pieceId === x.id) side.edges = side.edges.map((e) => (e >= i ? e + 1 : e));
+    });
+    return { pieceId: x.id, edges: next.edges.length };
+  },
+  add_dart: async (p) => {
+    const x = pc(p);
+    const e = Number(p.edge);
+    const [next, pair] = await api.addDart(x, e, Number(p.at ?? 0.5), Number(p.widthMm ?? 20), Number(p.depthMm ?? 40));
+    const jid = uid("j");
+    edit((proj) => {
+      const k = proj.pieces.findIndex((y) => y.id === x.id);
+      proj.pieces[k] = { ...next, id: x.id };
+      for (const j of proj.joins) for (const side of [j.a, j.b]) if (side.pieceId === x.id) side.edges = side.edges.map((q) => (q > e ? q + 3 : q));
+      proj.joins.push({ id: jid, a: { pieceId: x.id, edges: [pair[0]] }, b: { pieceId: x.id, edges: [pair[1]] } });
+    });
+    return { pieceId: x.id, dartEdges: pair, joinId: jid };
+  },
+  look_from: (p) => {
+    lastView = "3d";
+    lookFrom(new THREE.Vector3(Number(p.x ?? 0.55), Number(p.y ?? -0.75), Number(p.z ?? 0.6)));
+    return { ok: true };
+  },
 };
 
 
+/** Wait for a 3D build already under way (for example the one started on launch). */
+async function settledBuild(): Promise<void> {
+  for (let k = 0; k < 600 && sim3d.building; k++) await new Promise((r) => setTimeout(r, 50));
+}
+
 /** Methods that change the pattern return a screenshot by default. */
-const READ_ONLY = new Set(["get_state", "list_templates", "list_material_presets", "bill_of_materials", "save_project", "export", "sim_status"]);
+const READ_ONLY = new Set(["get_state", "list_templates", "list_material_presets", "list_catalogue", "bill_of_materials", "save_project", "export", "sim_status"]);
 /** Methods whose screenshot should show the 3D window or the fabric test, not the pattern. */
-const NON_PATTERN = new Set(["screenshot", "view", "simulate", "sim_pin", "sim_weight", "sim_object", "sim_remove", "sim_props", "sim_status", "run_drape"]);
+const NON_PATTERN = new Set(["screenshot", "view", "simulate", "sim_pin", "sim_weight", "sim_object", "sim_remove", "sim_props", "sim_status", "run_drape", "look_from", "make_bag", "arrange_piece", "set_form"]);
 
 export async function initControl(): Promise<void> {
   await listen<{ id: number; method: string; params: Params | null }>("hw-control", async (ev) => {
@@ -559,5 +736,6 @@ export async function initControl(): Promise<void> {
       await api.controlReply(id, { ok: false, error: e instanceof Error ? e.message : String(e) });
     }
   });
+  await invoke("control_ready");
 }
 

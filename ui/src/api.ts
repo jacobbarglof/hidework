@@ -1,6 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  BagParams,
+  BagStyle,
   Bom,
+  Catalogue,
   Computed,
   DrapeRequest,
   DrapeResult,
@@ -39,4 +42,11 @@ export const api = {
     invoke<Piece>("make_gusset", { name, length, width, material, at, id }),
   lining: (project: Project, piece: string, inset: number, id: string) => invoke<Piece>("make_lining", { project, piece, inset, id }),
   controlReply: (id: number, value: unknown) => invoke<void>("control_reply", { id, value }),
+  catalogue: () => invoke<Catalogue>("craft_catalogue"),
+  makeBag: (params: BagParams) => invoke<Project>("make_bag", { params }),
+  bagDefaults: (style: BagStyle) => invoke<BagParams>("bag_defaults", { style }),
+  roundCorner: (piece: Piece, vertex: number, radius: number) => invoke<Piece>("round_corner", { piece, vertex, radius }),
+  addDart: (piece: Piece, edge: number, at: number, width: number, depth: number) => invoke<[Piece, [number, number]]>("add_dart", { piece, edge, at, width, depth }),
+  arrangePoint: (project: Project, piece: string, at: V) => invoke<[number, number, number]>("arrange_point", { project, piece, at }),
+  arrangeInverse: (project: Project, piece: string, world: [number, number, number]) => invoke<V>("arrange_inverse", { project, piece, world }),
 };

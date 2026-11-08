@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -114,6 +114,14 @@ fn handle(mut stream: TcpStream, app: &AppHandle, pending: &Pending, secret: &st
     if method == "ping" {
         return respond(&mut stream, "200 OK", &json!({"ok": true, "result": {"app": "Hidework", "version": env!("CARGO_PKG_VERSION")}}));
     }
+    // A call that arrives while the app is still starting waits for the interface to listen,
+    // instead of being sent to nobody.
+    for _ in 0..900 {
+        if READY.load(Ordering::SeqCst) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
     let id = pending.next.fetch_add(1, Ordering::SeqCst) + 1;
     let (tx, rx) = channel();
     pending.waiting.lock().unwrap().insert(id, tx);
@@ -121,6 +129,13 @@ fn handle(mut stream: TcpStream, app: &AppHandle, pending: &Pending, secret: &st
     let reply = rx.recv_timeout(Duration::from_secs(120)).unwrap_or_else(|_| json!({"ok": false, "error": "The app did not answer in time."}));
     pending.waiting.lock().unwrap().remove(&id);
     respond(&mut stream, "200 OK", &reply)
+}
+
+static READY: AtomicBool = AtomicBool::new(false);
+
+/// The interface is listening for control calls.
+pub fn set_ready() {
+    READY.store(true, Ordering::SeqCst);
 }
 
 pub fn reply(pending: &Pending, id: u64, value: Value) {

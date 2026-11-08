@@ -26,14 +26,27 @@ export interface Material {
   color?: string | null;
 }
 
-export type Edge =
-  | { type: "line"; stitched: boolean; skiveMm?: number }
-  | { type: "cubic"; c1: V; c2: V; stitched: boolean; skiveMm?: number };
+export type EdgeFinish = "raw" | "burnished" | "painted" | "turned" | "bound";
+interface EdgeCommon {
+  stitched: boolean;
+  skiveMm?: number;
+  finish?: EdgeFinish;
+  turnMm?: number;
+  crease?: boolean;
+}
+export type Edge = ({ type: "line" } & EdgeCommon) | ({ type: "cubic"; c1: V; c2: V } & EdgeCommon);
+
+export type StitchKind =
+  | "saddle" | "lockstitch" | "running" | "backstitch" | "cross" | "baseball" | "whip" | "blanket"
+  | "laceWhip" | "laceSingleLoop" | "laceDoubleLoop" | "laceCross";
 
 export interface StitchSettings {
   marginMm: number;
   pitchMm: number;
   holeMm: number;
+  kind?: StitchKind;
+  rows?: number;
+  rowGapMm?: number;
 }
 
 export interface Fold {
@@ -66,6 +79,56 @@ export interface Piece {
   holes: Hole[];
   grainDeg: number;
   notes?: string;
+  hardware?: HardwarePlacement[];
+  marks?: Mark[];
+  place?: Place | null;
+}
+
+export interface HardwarePlacement {
+  id: string;
+  kind: string;
+  at: V;
+  angleDeg?: number;
+  sizeMm?: number;
+  label?: string;
+}
+
+export type MarkKind = "stamp" | "tooling" | "emboss" | "engrave" | "paint" | "text" | "perforate";
+export interface Mark {
+  id: string;
+  kind: MarkKind;
+  center: V;
+  size: V;
+  angleDeg?: number;
+  text?: string;
+  pattern?: string;
+}
+
+export type Face = "flat" | "front" | "back" | "left" | "right" | "bottom" | "top" | "wrapSides" | "wrapAround" | "backFlap" | "handleFront" | "handleBack" | "strapSides";
+export interface Place {
+  face: Face;
+  offset?: V;
+  layerMm?: number;
+  spanMm?: number;
+  tabMm?: number;
+}
+
+export interface Form {
+  widthMm: number;
+  depthMm: number;
+  heightMm: number;
+  round?: boolean;
+  cornerMm?: number;
+}
+
+export type Construction = "edgeToEdge" | "turned" | "lapped" | "butt" | "welted" | "piped" | "bound" | "zipper";
+export type Adhesive = "none" | "contactCement" | "waterContact" | "pva" | "tape";
+
+export interface Laminate {
+  id: string;
+  a: string;
+  b: string;
+  glue?: Adhesive;
 }
 
 export interface EdgeRef {
@@ -77,6 +140,11 @@ export interface Join {
   id: string;
   a: EdgeRef;
   b: EdgeRef;
+  construction?: Construction;
+  glue?: Adhesive;
+  glueWidthMm?: number;
+  insertMaterialId?: string | null;
+  insertMm?: number;
 }
 
 export interface Project {
@@ -88,6 +156,9 @@ export interface Project {
   pieces: Piece[];
   joins: Join[];
   threadColor?: string | null;
+  thread?: string | null;
+  form?: Form | null;
+  laminates?: Laminate[];
 }
 
 export interface Rect {
@@ -100,6 +171,9 @@ export interface StitchRun {
   closed: boolean;
   holes: V[];
   spacingMm: number;
+  kind?: StitchKind;
+  row?: number;
+  lace?: boolean;
 }
 
 export interface FoldGeom {
@@ -130,6 +204,10 @@ export interface ComputedPiece {
   folds: FoldGeom[];
   holes: Hole[];
   skive: V[][];
+  glue?: V[][];
+  creases?: V[][];
+  marks?: Mark[];
+  hardware?: HardwarePlacement[];
   edges: EdgeReport[];
   thicknessMm: number;
   materialName: string;
@@ -230,9 +308,11 @@ export interface Bom {
   wastePct: number;
   materials: { materialId: string; name: string; pieces: number; areaCm2: number; sqft: number; sqftWithWaste: number; cost: number | null }[];
   pieces: { name: string; material: string; cutCount: number; areaCm2: number; stitchHoles: number }[];
-  hardware: { label: string; diameterMm: number; slotMm: number; count: number }[];
+  hardware: { label: string; diameterMm: number; slotMm: number; count: number; kind: string; grams: number }[];
   seamMm: number;
   threadM: number;
+  threads: { name: string; stitch: string; seamMm: number; lengthM: number }[];
+  glue: { name: string; areaCm2: number; grams: number }[];
   stitchHoles: number;
   totalCost: number | null;
 }
@@ -262,4 +342,47 @@ export interface StrapParams {
   tongueSlotMm?: number;
   rivetMm?: number;
   stitched?: boolean;
+}
+
+// ---------- craft catalogue (crates/hidework-core/src/craft.rs) ----------
+
+export interface StitchInfo { kind: StitchKind; name: string; group: string; description: string; threadFactor: number; strands: number; wrapsEdge: boolean; lace: boolean; needles: number; defaultPitchMm: number }
+export interface ThreadInfo { id: string; name: string; diameterMm: number; breakN: number; lace: boolean }
+export interface ConstructionInfo { construction: Construction; name: string; description: string }
+export interface AdhesiveInfo { adhesive: Adhesive; name: string; description: string; shearMpa: number; gramsPerM2: number }
+export interface FinishInfo { finish: EdgeFinish; name: string; description: string }
+export interface HardwareInfo { id: string; name: string; group: string; description: string; defaultSizeMm: number; sizeLabel: string; grams: number; fastens: boolean; holdN: number }
+export interface Catalogue {
+  stitches: StitchInfo[];
+  threads: ThreadInfo[];
+  constructions: ConstructionInfo[];
+  adhesives: AdhesiveInfo[];
+  finishes: FinishInfo[];
+  hardware: HardwareInfo[];
+}
+
+export type BagStyle = "tote" | "boxedTote" | "messenger" | "zipPouch" | "bucket";
+export interface BagParams {
+  name: string;
+  style: BagStyle;
+  widthMm: number;
+  heightMm: number;
+  depthMm: number;
+  cornerMm: number;
+  leather: string;
+  thicknessMm: number;
+  construction: Construction;
+  glue: Adhesive;
+  stitch: StitchKind;
+  carry: "none" | "handles" | "shoulder" | "both";
+  handleLengthMm: number;
+  handleWidthMm: number;
+  strapLengthMm: number;
+  strapWidthMm: number;
+  closure: "none" | "magnetic" | "turnLock" | "snap";
+  flapMm: number;
+  pocket: boolean;
+  feet: boolean;
+  edge: EdgeFinish;
+  threadColor: string;
 }

@@ -10,10 +10,12 @@ export type Sel =
   | { kind: "vertex"; piece: string; index: number }
   | { kind: "hole"; piece: string; id: string }
   | { kind: "fold"; piece: string; id: string }
+  | { kind: "hardware"; piece: string; id: string }
+  | { kind: "mark"; piece: string; id: string }
   | { kind: "join"; id: string }
   | { kind: "material"; id: string };
 
-export type Tool = "select" | "hole" | "fold" | "join" | "measure" | "rect" | "polygon";
+export type Tool = "select" | "hole" | "fold" | "join" | "measure" | "rect" | "polygon" | "hardware" | "mark";
 export type Mode = "pattern";
 
 export const state = {
@@ -37,7 +39,14 @@ const redoStack: string[] = [];
 const listeners = new Set<() => void>();
 
 /** Hardware picked in the library, placed by the next Punch click. */
-export const placing = { hardware: null as null | { label: string; diameterMm: number; lengthMm: number } };
+export const placing = {
+  /** A plain hole or slot for the Punch tool. */
+  hardware: null as null | { label: string; diameterMm: number; lengthMm: number },
+  /** Catalogue hardware for the Hardware tool. */
+  kind: "rivet-m",
+  /** Surface work for the Mark tool. */
+  mark: { kind: "stamp" as import("./types").MarkKind, size: { x: 30, y: 15 }, text: "", pattern: "" },
+};
 
 export function subscribe(fn: () => void): void {
   listeners.add(fn);
@@ -126,6 +135,8 @@ export function fixSelection(): void {
   else if ((s.kind === "edge" || s.kind === "vertex") && s.index >= p.vertices.length) state.sel = { kind: "piece", piece: p.id };
   else if (s.kind === "hole" && !p.holes.some((h) => h.id === s.id)) state.sel = { kind: "piece", piece: p.id };
   else if (s.kind === "fold" && !p.folds.some((f) => f.id === s.id)) state.sel = { kind: "piece", piece: p.id };
+  else if (s.kind === "hardware" && !(p.hardware ?? []).some((x) => x.id === s.id)) state.sel = { kind: "piece", piece: p.id };
+  else if (s.kind === "mark" && !(p.marks ?? []).some((x) => x.id === s.id)) state.sel = { kind: "piece", piece: p.id };
 }
 
 let inflight = false;

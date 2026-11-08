@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import "@fontsource/cinzel/500.css";
 import "@fontsource/cinzel/700.css";
 import "@fontsource/cinzel-decorative/700.css";
@@ -17,7 +18,7 @@ import { deleteVertex, duplicatePiece, mirrorPiece, rotatePiece } from "./ops";
 import { closeFabricTest, deletePiece, fabricTestOpen, openFabricTest, panel, renderFabricTest, renderInspector } from "./panels";
 import { edit, notify, piece, placing, redo, selectedPieceId, setProject, setStatus, state, subscribe, undo, version, type Tool } from "./store";
 import type { FabOptions, PageSize } from "./types";
-import { capture3d, frameView, initView3d, needsRebuild, rebuild, resetSim, setHeat, setRunning, sim3d, viewPreset, type Tool3d } from "./view3d";
+import { capture3d, frameView, initView3d, needsRebuild, rebuild, resetSim, setHeat, setMetal, setRunning, sim3d, viewPreset, type Tool3d } from "./view3d";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const FILTER = [{ name: "Hidework pattern", extensions: ["hidework"] }];
@@ -157,18 +158,24 @@ function menus(): Record<string, MenuItem[]> {
       ["Rectangle", "R", () => setTool("rect")],
       ["Polygon", "P", () => setTool("polygon")],
       ["Strap or belt…", "", () => { panel.special = "strap"; notify(); }],
+      ["Bag builder…", "", () => { panel.special = "bag"; notify(); }],
       "-",
       ["Mirror piece", "", onPiece((id) => edit(() => mirrorPiece(piece(id)!, "x")))],
       ["Flip piece", "", onPiece((id) => edit(() => mirrorPiece(piece(id)!, "y")))],
       ["Rotate 90°", "", onPiece((id) => edit(() => rotatePiece(piece(id)!, true)))],
       "-",
       ["Punch hole", "H", () => { placing.hardware = null; setTool("hole"); }],
+      ["Set hardware", "K", () => setTool("hardware")],
+      ["Surface work (stamp, tooling…)", "E", () => setTool("mark")],
       ["Fold line", "F", () => setTool("fold")],
       ["Measure", "M", () => setTool("measure")],
     ],
     Sewing: [
       ["Segment sewing", "S", () => setTool("join")],
       ["Show seams", "", () => { state.sel = { kind: "none" }; notify(); }],
+      ["Glue every seam (contact cement)", "", () => edit((p) => p.joins.forEach((j) => (j.glue = "contactCement")))],
+      ["Make every seam edge to edge", "", () => edit((p) => p.joins.forEach((j) => (j.construction = "edgeToEdge")))],
+      ["Make every seam turned", "", () => edit((p) => p.joins.forEach((j) => (j.construction = "turned")))],
     ],
     "3D": [
       ["Simulate", "Space", toggleSim],
@@ -177,10 +184,16 @@ function menus(): Record<string, MenuItem[]> {
       "-",
       ["Stress map", "", () => setHeat(!sim3d.heat)],
       ["Show stitches", "", () => { sim3d.stitches = !sim3d.stitches; notify(); }],
+      ["Hardware: brass", "", () => setMetal("brass")],
+      ["Hardware: nickel", "", () => setMetal("nickel")],
+      ["Hardware: gunmetal", "", () => setMetal("gunmetal")],
+      ["Hardware: copper", "", () => setMetal("copper")],
+      ["Hardware: black", "", () => setMetal("black")],
       "-",
       ["Front view", "1", () => viewPreset("front")],
       ["Side view", "3", () => viewPreset("side")],
       ["Top view", "7", () => viewPreset("top")],
+      ["Home view", "", () => viewPreset("iso")],
       ["Fit view", "0", frameView],
     ],
     Fabric: [
@@ -229,7 +242,7 @@ async function showTemplates(): Promise<void> {
 
 function showShortcuts(): void {
   const rows: [string, string][] = [
-    ["Space", "Simulate on/off"], ["V", "Select / transform"], ["R", "Rectangle"], ["P", "Polygon (click points, double-click to close)"], ["H", "Punch hole"], ["F", "Fold line"], ["S or J", "Segment sewing"], ["M", "Measure"],
+    ["Space", "Simulate on/off"], ["V", "Select / transform"], ["R", "Rectangle"], ["P", "Polygon (click points, double-click to close)"], ["H", "Punch hole"], ["K", "Set hardware"], ["E", "Stamp, tooling, paint, perforate"], ["F", "Fold line"], ["S or J", "Segment sewing"], ["M", "Measure"],
     ["G / I / W / O", "3D: move cloth / pin / weight / drop object"], ["Right drag", "Orbit (3D) or pan (2D)"], ["Middle drag", "Pan (3D)"], ["Wheel", "Zoom"], ["0", "Fit view"], ["1 / 3 / 7", "Front / side / top"],
     ["Arrows", "Nudge piece (Shift ×10)"], ["Ctrl+Z / Ctrl+Y", "Undo / redo"], ["Ctrl+D", "Duplicate"], ["Del", "Delete selection"],
   ];
@@ -238,8 +251,9 @@ function showShortcuts(): void {
   modal.classList.remove("hidden");
 }
 
-function showMcp(): void {
+async function showMcp(): Promise<void> {
   const modal = $("modal");
+  const path = (await invoke<string | null>("mcp_path").catch(() => null)) ?? "C:\\Program Files\\Hidework\\hidework-mcp.exe";
   modal.replaceChildren(
     h(
       "div",
@@ -247,7 +261,8 @@ function showMcp(): void {
       h("h2", {}, "Connect an AI agent"),
       h("p", { class: "hint" }, "Hidework includes an MCP server, hidework-mcp, next to the app. Agents can draft, sew, simulate, load, export and take screenshots."),
       h("p", {}, "Claude Code:"),
-      h("textarea", { rows: 2, readOnly: true }, "claude mcp add hidework -- C:\\Programs\\Hidework\\target\\release\\hidework-mcp.exe"),
+      h("textarea", { rows: 2, readOnly: true }, `claude mcp add hidework -- "${path}"`),
+      h("p", { class: "hint" }, "Any MCP client works the same way: run that program over stdio."),
       h("div", { class: "btn-row spaced" }, button("Close", () => modal.classList.add("hidden"), "quiet")),
     ),
   );
@@ -314,6 +329,12 @@ function deleteSelection(): void {
   } else if (s.kind === "join") {
     edit((p) => (p.joins = p.joins.filter((j) => j.id !== s.id)));
     state.sel = { kind: "none" };
+  } else if (s.kind === "hardware") {
+    edit((p) => p.pieces.forEach((pc) => (pc.hardware = (pc.hardware ?? []).filter((x) => x.id !== s.id))));
+    state.sel = { kind: "piece", piece: s.piece };
+  } else if (s.kind === "mark") {
+    edit((p) => p.pieces.forEach((pc) => (pc.marks = (pc.marks ?? []).filter((x) => x.id !== s.id))));
+    state.sel = { kind: "piece", piece: s.piece };
   }
   notify();
 }
@@ -337,6 +358,8 @@ function renderToolbars(): void {
     tb("⬠", "Polygon", "Polygon (P)", t === "polygon", () => setTool("polygon")),
     h("span", { class: "tb-sep" }),
     tb("◎", "Punch", "Punch hole (H)", t === "hole", () => { placing.hardware = null; setTool("hole"); }),
+    tb("⊚", "Hardware", "Set hardware (K): pick it in the library", t === "hardware", () => setTool("hardware")),
+    tb("✦", "Mark", "Stamp, tooling, emboss, paint, perforate (E)", t === "mark", () => setTool("mark")),
     tb("┄", "Fold", "Fold line (F)", t === "fold", () => setTool("fold")),
     tb(state.foldOrientation === "horizontal" ? "═" : "║", "", "Fold direction", false, () => { state.foldOrientation = state.foldOrientation === "horizontal" ? "vertical" : "horizontal"; setTool("fold"); }),
     tb("⫘", "Sew", "Segment sewing (S)", t === "join", () => setTool("join")),
@@ -453,6 +476,8 @@ function wire(): void {
     else if (key === "f") setTool("fold");
     else if (key === "j" || key === "s") setTool("join");
     else if (key === "m") setTool("measure");
+    else if (key === "k") setTool("hardware");
+    else if (key === "e") setTool("mark");
     else if (key === "g") setTool3d("move");
     else if (key === "i") setTool3d("pin");
     else if (key === "w") setTool3d("weight");
@@ -499,7 +524,18 @@ async function main(): Promise<void> {
   subscribe(refreshChrome);
   wire();
   await initControl();
-  setProject(await api.fromTemplate("card-wallet"), null);
+  // Opened by double-clicking a .hidework file: show it; otherwise start with the wallet.
+  const file = await invoke<string | null>("startup_file").catch(() => null);
+  if (file) {
+    try {
+      setProject(await api.load(file), file);
+    } catch (e) {
+      setStatus(`Could not open ${file}: ${e}`);
+      setProject(await api.fromTemplate("card-wallet"), null);
+    }
+  } else {
+    setProject(await api.fromTemplate("card-wallet"), null);
+  }
   void loadPresets().then(notify);
   setStatus("Welcome. Space simulates the wallet in 3D; the library has fabrics, hardware, objects and props.");
 }

@@ -26,15 +26,27 @@ pub fn list() -> Vec<TemplateInfo> {
             name: "A5 journal cover",
             description: "One piece with two inside flaps that hold the notebook's covers.",
         },
+        TemplateInfo { id: "tote", name: "Tote bag", description: "Front, back, one gusset, riveted handles, patch pocket, magnetic closure and feet. Arranged in 3D." },
+        TemplateInfo { id: "boxed-tote", name: "Boxed tote", description: "Five panels with square corners, handles and feet." },
+        TemplateInfo { id: "messenger", name: "Messenger bag", description: "Back panel with a flap, gusset, turn lock and a shoulder strap on Chicago screws." },
+        TemplateInfo { id: "bucket", name: "Bucket bag", description: "Oval bottom, one-piece body with a back seam, grommets for a drawstring, shoulder strap." },
+        TemplateInfo { id: "zip-pouch", name: "Zip pouch", description: "Two kidskin panels with a zipper across the top." },
     ]
 }
 
 pub fn by_id(id: &str) -> Option<Project> {
+    use crate::bags::{bag, BagParams, BagStyle};
+    let style = |s| Some(bag(&BagParams::style_defaults(s)));
     match id {
         "blank" => Some(blank()),
         "card-wallet" => Some(card_wallet()),
         "belt" => Some(belt()),
         "journal-cover" => Some(journal_cover()),
+        "tote" => style(BagStyle::Tote),
+        "boxed-tote" => style(BagStyle::BoxedTote),
+        "messenger" => style(BagStyle::Messenger),
+        "bucket" => style(BagStyle::Bucket),
+        "zip-pouch" => style(BagStyle::ZipPouch),
         _ => None,
     }
 }
@@ -57,6 +69,9 @@ fn base(name: &str) -> Project {
         pieces: vec![],
         joins: vec![],
         thread_color: None,
+        thread: None,
+        form: None,
+        laminates: vec![],
     }
 }
 
@@ -113,10 +128,13 @@ pub fn card_wallet() -> Project {
         holes: vec![],
         grain_deg: 90.0,
         notes: "Burnish the pocket mouth before stitching.".into(),
+        hardware: vec![],
+        marks: vec![],
+        place: None,
     });
     let edge = |e: usize| EdgeRef { piece_id: "body".into(), edges: vec![e] };
-    p.joins.push(Join { id: "j1".into(), a: edge(1), b: edge(2) });
-    p.joins.push(Join { id: "j2".into(), a: edge(9), b: edge(8) });
+    p.joins.push(Join::new("j1", edge(1), edge(2)));
+    p.joins.push(Join::new("j2", edge(9), edge(8)));
     p
 }
 
@@ -179,10 +197,13 @@ pub fn journal_cover() -> Project {
         holes: vec![],
         grain_deg: 90.0,
         notes: "Fold the flaps inward. Spine runs down the middle.".into(),
+        hardware: vec![],
+        marks: vec![],
+        place: None,
     });
     let e = |i: usize| EdgeRef { piece_id: "cover".into(), edges: vec![i] };
     for (k, (a, b)) in [(0, 1), (4, 3), (10, 9), (6, 7)].into_iter().enumerate() {
-        p.joins.push(Join { id: format!("j{k}"), a: e(a), b: e(b) });
+        p.joins.push(Join::new(&format!("j{k}"), e(a), e(b)));
     }
     p
 }

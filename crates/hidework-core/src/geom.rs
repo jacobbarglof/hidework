@@ -173,6 +173,45 @@ pub fn offset_closed(pts: &[Vec2], d: f64) -> Vec<Vec2> {
         .collect()
 }
 
+/// Offset a closed polygon by a different distance per segment (`d[i]` for `pts[i]` to
+/// `pts[i + 1]`; positive inward). Where the distance steps between two straight, collinear
+/// segments the result gets a small jog, so it can have more points than the input.
+pub fn offset_variable(pts: &[Vec2], d: &[f64]) -> Vec<Vec2> {
+    let n = pts.len();
+    if n < 3 || d.len() != n {
+        return pts.to_vec();
+    }
+    if d.iter().all(|&x| (x - d[0]).abs() < 1e-12) {
+        return offset_closed(pts, d[0]);
+    }
+    let s = if signed_area(pts) > 0.0 { 1.0 } else { -1.0 };
+    let mut out = Vec::with_capacity(n + 4);
+    for i in 0..n {
+        let ip = (i + n - 1) % n;
+        let (a, p, b) = (pts[ip], pts[i], pts[(i + 1) % n]);
+        let (t1, t2) = ((p - a).normalized(), (b - p).normalized());
+        let (n1, n2) = (t1.left() * s, t2.left() * s);
+        let (p1, p2) = (p + n1 * d[ip], p + n2 * d[i]);
+        let cr = t1.x * t2.y - t1.y * t2.x;
+        if cr.abs() < 1e-6 {
+            out.push(p1);
+            if (d[ip] - d[i]).abs() > 1e-9 {
+                out.push(p2);
+            }
+            continue;
+        }
+        let q = p2 - p1;
+        let u = (q.x * t2.y - q.y * t2.x) / cr;
+        let x = p1 + t1 * u;
+        if x.dist(p) > 4.0 * d[ip].abs().max(d[i].abs()) + 1e-9 {
+            out.extend([p1, p2]);
+        } else {
+            out.push(x);
+        }
+    }
+    out
+}
+
 /// Point at arc length `s` along an open polyline.
 pub fn point_at(pts: &[Vec2], s: f64) -> Vec2 {
     let mut acc = 0.0;
@@ -221,6 +260,15 @@ mod tests {
         assert!(ins.iter().all(|p| p.x > 0.5 && p.x < 9.5));
         let out = offset_closed(&sq, -2.0);
         assert!(out[2].dist(v(12.0, 12.0)) < 1e-9);
+    }
+
+    #[test]
+    fn variable_offset_grows_one_side() {
+        let sq = vec![v(0.0, 0.0), v(10.0, 0.0), v(10.0, 10.0), v(0.0, 10.0)];
+        // Only the first segment (y = 0) moves out by 3.
+        let out = offset_variable(&sq, &[-3.0, 0.0, 0.0, 0.0]);
+        let r = Rect::of(&out);
+        assert!((r.min.y + 3.0).abs() < 1e-9 && (r.max.y - 10.0).abs() < 1e-9 && (r.width() - 10.0).abs() < 1e-9, "{out:?}");
     }
 
     #[test]

@@ -1,13 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Hidework",
-  "version": "0.1.0",
-  "identifier": "org.hidework.app",
+  "version": "0.2.0",
+  "identifier": "org.hidework.desktop",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeBuildCommand": "npm run build && cargo build --release -p hidework-mcp"
   },
   "app": {
     "windows": [
@@ -25,13 +25,38 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis", "msi"],
+    "publisher": "Hidework contributors",
+    "copyright": "MIT OR Apache-2.0",
+    "category": "DeveloperTool",
+    "shortDescription": "Leather goods pattern design with 3D simulation",
+    "longDescription": "Open-source desktop software for designing leather goods: draft patterns, choose stitches, seams, glues and hardware, simulate the finished piece in 3D, and print, laser-cut or 3D-print the templates.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "../target/release/hidework-mcp.exe": "hidework-mcp.exe"
+    },
+    "fileAssociations": [
+      {
+        "ext": ["hidework"],
+        "name": "Hidework project",
+        "description": "Hidework leather pattern project",
+        "role": "Editor",
+        "mimeType": "application/x-hidework"
+      }
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico",
+        "startMenuFolder": "Hidework"
+      }
+    }
   }
 }

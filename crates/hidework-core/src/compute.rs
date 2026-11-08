@@ -1,8 +1,8 @@
 //! Turns the designed pattern into what gets cut: fold compensation, stitch lines and holes,
 //! seam allowance, per-edge measurements and join checks.
 
-use crate::geom::{clip_axis_line, flatten_cubic, offset_closed, point_at, v, Rect, Vec2};
-use crate::model::{fold_allowance_mm, EdgeKind, EdgeRef, Hole, Orientation, Piece, Project};
+use crate::geom::{clip_axis_line, flatten_cubic, offset_closed, offset_variable, point_at, v, Rect, Vec2};
+use crate::model::{fold_allowance_mm, Adhesive, EdgeKind, EdgeRef, HardwarePlacement, Hole, Mark, MarkKind, Orientation, Piece, Project, StitchKind};
 use serde::Serialize;
 
 const EPS: f64 = 1e-7;
@@ -39,6 +39,14 @@ pub struct ComputedPiece {
     pub holes: Vec<Hole>,
     /// Inner boundary of each skive zone, as polylines.
     pub skive: Vec<Vec<Vec2>>,
+    /// Inner boundary of each glued band (where to spread cement), as polylines.
+    pub glue: Vec<Vec<Vec2>>,
+    /// Decorative crease lines.
+    pub creases: Vec<Vec<Vec2>>,
+    /// Stamps, tooling and other surface work, in compensated coordinates.
+    pub marks: Vec<Mark>,
+    /// Hardware placements, in compensated coordinates.
+    pub hardware: Vec<HardwarePlacement>,
     pub edges: Vec<EdgeReport>,
     pub thickness_mm: f64,
     pub material_name: String,
@@ -53,6 +61,11 @@ pub struct StitchRun {
     pub holes: Vec<Vec2>,
     /// Actual hole spacing after spreading holes evenly over the run.
     pub spacing_mm: f64,
+    pub kind: StitchKind,
+    /// 0 for the row nearest the edge.
+    pub row: u32,
+    /// Laced through slits rather than stitched through holes.
+    pub lace: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -148,10 +161,37 @@ pub fn compute(project: &Project) -> ComputedProject {
         .iter()
         .filter_map(|j| {
             let a = side_report(&pieces, &j.a)?;
+            if j.onto_face() {
+                let name = project.piece(&j.b.piece_id)?.name.clone();
+                return Some(JoinReport {
+                    id: j.id.clone(),
+                    a_length_mm: a.length,
+                    b_length_mm: 0.0,
+                    a_stitch_mm: a.stitch,
+                    b_stitch_mm: 0.0,
+                    a_holes: a.holes,
+                    b_holes: 0,
+                    ok: true,
+                    message: format!("Sewn onto the face of {name}: {:.1} mm, {} holes", if a.stitch > 0.0 { a.stitch } else { a.length }, a.holes),
+                });
+            }
             let b = side_report(&pieces, &j.b)?;
             Some(join_report(&j.id, a, b))
         })
         .collect();
+    // Glue bands along glued seams, on both sides.
+    for j in &project.joins {
+        if j.glue == Adhesive::None {
+            continue;
+        }
+        for side in [&j.a, &j.b] {
+            let Some(pc) = project.piece(&side.piece_id) else { continue };
+            let Some(cp) = pieces.iter_mut().find(|c| c.id == side.piece_id) else { continue };
+            let w = if j.glue_width_mm > 0.0 { j.glue_width_mm } else { (2.0 * pc.stitch.margin_mm).max(6.0) };
+            let bands = edge_bands(&cp.outline, &cp.outline_edges, &side.edges, w);
+            cp.glue.extend(bands);
+        }
+    }
     let mut bounds = Rect::empty();
     for (cp, p) in pieces.iter().zip(project.pieces.iter().filter(|p| pieces_contains(&pieces, &p.id))) {
         bounds.union(&cp.bounds.translated(p.position));
@@ -322,9 +362,13 @@ fn compute_piece(piece: &Piece, thickness: f64, material_name: String) -> Comput
             runs.push(cur);
         }
     }
-    let inset = if runs.is_empty() { Vec::new() } else { offset_closed(&pts, piece.stitch.margin_mm) };
     let pitch = piece.stitch.pitch_mm.max(0.5);
+    let lace = crate::craft::stitch_info(piece.stitch.kind).lace;
+    let rows = piece.stitch.rows.clamp(1, 4);
+    let gap = if piece.stitch.row_gap_mm > 0.0 { piece.stitch.row_gap_mm } else { 4.0 };
     let mut stitch_runs = Vec::new();
+    for row in 0..rows {
+    let inset = if runs.is_empty() { Vec::new() } else { offset_closed(&pts, piece.stitch.margin_mm + gap * row as f64) };
     for run in &runs {
         let mut line: Vec<Vec2> = run.iter().map(|&i| inset[i]).collect();
         line.push(inset[(run[run.len() - 1] + 1) % m]);
@@ -333,7 +377,9 @@ fn compute_piece(piece: &Piece, thickness: f64, material_name: String) -> Comput
         for (k, &i) in run.iter().enumerate() {
             let l = line[k].dist(line[k + 1]);
             if let Some(e) = tags[i] {
-                edges[e].stitch_length_mm += l;
+                if row == 0 {
+                    edges[e].stitch_length_mm += l;
+                }
                 match ranges.iter_mut().find(|r| r.0 == e) {
                     Some(r) => r.2 = s + l,
                     None => ranges.push((e, s, s + l)),
@@ -352,17 +398,22 @@ fn compute_piece(piece: &Piece, thickness: f64, material_name: String) -> Comput
             (n + 1, sp, (0..=n).map(|k| k as f64 * sp).collect())
         };
         debug_assert_eq!(count, offsets.len());
-        for &(e, a, b) in &ranges {
-            edges[e].hole_count += offsets.iter().filter(|&&o| o >= a - 1e-6 && o <= b + 1e-6).count();
+        if row == 0 {
+            for &(e, a, b) in &ranges {
+                edges[e].hole_count += offsets.iter().filter(|&&o| o >= a - 1e-6 && o <= b + 1e-6).count();
+            }
         }
         let holes = offsets.iter().map(|&o| point_at(&line, o)).collect();
         if all {
             line.pop();
         }
-        stitch_runs.push(StitchRun { points: line, closed: all, holes, spacing_mm: spacing });
+        stitch_runs.push(StitchRun { points: line, closed: all, holes, spacing_mm: spacing, kind: piece.stitch.kind, row, lace });
+    }
     }
 
-    let cut = if piece.seam_allowance_mm > 0.0 { offset_closed(&pts, -piece.seam_allowance_mm) } else { pts.clone() };
+    // Cut line: seam allowance everywhere plus a turn allowance on turned (folded) edges.
+    let out: Vec<f64> = tags.iter().map(|t| -(piece.seam_allowance_mm + t.map_or(0.0, |e| piece.edges[e].turn_allowance()))).collect();
+    let cut = if out.iter().any(|&d| d != 0.0) { offset_variable(&pts, &out) } else { pts.clone() };
 
     // Fold lines, carried through any later folds.
     let fold_geoms = folds
@@ -394,34 +445,40 @@ fn compute_piece(piece: &Piece, thickness: f64, material_name: String) -> Comput
         })
         .collect();
 
-    let holes = piece
-        .holes
-        .iter()
-        .map(|h| Hole { center: map_all(&folds, h.center), ..h.clone() })
-        .collect();
+    // Punched holes, then the holes hardware and perforation need.
+    let mut design_holes = piece.holes.clone();
+    for hw in &piece.hardware {
+        design_holes.extend(crate::craft::hardware_holes(hw));
+    }
+    for mk in &piece.marks {
+        if mk.kind == MarkKind::Perforate {
+            design_holes.extend(perforation(mk));
+        }
+    }
+    let holes = design_holes.into_iter().map(|h| Hole { center: map_all(&folds, h.center), ..h }).collect();
+    let marks = piece.marks.iter().map(|mk| Mark { center: map_all(&folds, mk.center), ..mk.clone() }).collect();
 
     let mut skive = Vec::new();
+    let mut creases = Vec::new();
     for (e, edge) in piece.edges.iter().enumerate() {
-        if edge.skive_mm <= 0.0 {
-            continue;
+        // A turned edge is skived across its turn allowance.
+        let turn = edge.turn_allowance();
+        if edge.skive_mm > 0.0 || turn > 0.0 {
+            let w = if edge.skive_mm > 0.0 { edge.skive_mm } else { turn };
+            skive.extend(edge_bands(&pts, &tags, &[e], w));
         }
-        let ins = offset_closed(&pts, edge.skive_mm);
-        let mut line: Vec<Vec2> = Vec::new();
-        for i in 0..m {
-            if tags[i] == Some(e) {
-                if line.last().map_or(true, |l: &Vec2| l.dist(ins[i]) > 1e-9) {
-                    line.push(ins[i]);
-                }
-                line.push(ins[(i + 1) % m]);
-            }
-        }
-        if line.len() > 1 {
-            skive.push(line);
+        if edge.crease {
+            let d = (piece.stitch.margin_mm * 0.55).clamp(1.0, 2.5);
+            creases.extend(edge_bands(&pts, &tags, &[e], d));
         }
     }
 
     ComputedPiece {
         skive,
+        glue: Vec::new(),
+        creases,
+        marks,
+        hardware: piece.hardware.iter().map(|hw| HardwarePlacement { at: map_all(&folds, hw.at), ..hw.clone() }).collect(),
         id: piece.id.clone(),
         bounds: Rect::of(&cut),
         outline: pts,
@@ -436,6 +493,74 @@ fn compute_piece(piece: &Piece, thickness: f64, material_name: String) -> Comput
         thickness_mm: thickness,
         material_name,
     }
+}
+
+/// Polylines `d` inside the outline along the given edges, one per contiguous stretch.
+pub fn edge_bands(pts: &[Vec2], tags: &[Option<usize>], edges: &[usize], d: f64) -> Vec<Vec<Vec2>> {
+    let m = pts.len();
+    if m < 3 || d == 0.0 {
+        return vec![];
+    }
+    let ins = offset_closed(pts, d);
+    let on = |i: usize| tags[i].is_some_and(|e| edges.contains(&e));
+    let start = (0..m).find(|&i| !on(i));
+    let mut out = Vec::new();
+    let mut line: Vec<Vec2> = Vec::new();
+    let order: Vec<usize> = match start {
+        Some(s) => (1..=m).map(|k| (s + k) % m).collect(),
+        None => {
+            let mut l: Vec<Vec2> = ins.clone();
+            l.push(ins[0]);
+            return vec![l];
+        }
+    };
+    for i in order {
+        if on(i) {
+            if line.is_empty() {
+                line.push(ins[i]);
+            }
+            line.push(ins[(i + 1) % m]);
+        } else if line.len() > 1 {
+            out.push(std::mem::take(&mut line));
+        } else {
+            line.clear();
+        }
+    }
+    if line.len() > 1 {
+        out.push(line);
+    }
+    out
+}
+
+/// Holes filling a perforation mark: `pattern` is "spacing" or "spacing/diameter" in mm.
+fn perforation(mk: &Mark) -> Vec<Hole> {
+    let mut it = mk.pattern.split('/').map(|s| s.trim().parse::<f64>().ok());
+    let spacing = it.next().flatten().unwrap_or(6.0).max(1.5);
+    let dia = it.next().flatten().unwrap_or(2.0).clamp(0.5, spacing * 0.9);
+    let (c, s) = (mk.angle_deg.to_radians().cos(), mk.angle_deg.to_radians().sin());
+    let (nx, ny) = (((mk.size.x / spacing).floor() as i64).max(0), ((mk.size.y / spacing).floor() as i64).max(0));
+    let mut out = Vec::new();
+    for iy in 0..=ny {
+        for ix in 0..=nx {
+            // Staggered rows look like real perforated leather.
+            let stagger = if iy % 2 == 1 { spacing / 2.0 } else { 0.0 };
+            let x = -mk.size.x / 2.0 + (mk.size.x - nx as f64 * spacing) / 2.0 + ix as f64 * spacing + stagger;
+            let y = -mk.size.y / 2.0 + (mk.size.y - ny as f64 * spacing) / 2.0 + iy as f64 * spacing;
+            if x > mk.size.x / 2.0 + 1e-9 {
+                continue;
+            }
+            let k = out.len();
+            out.push(Hole {
+                id: format!("{}#{k}", mk.id),
+                center: mk.center + v(x * c - y * s, x * s + y * c),
+                diameter_mm: dia,
+                label: if k == 0 { "Perforation".into() } else { String::new() },
+                length_mm: 0.0,
+                angle_deg: 0.0,
+            });
+        }
+    }
+    out
 }
 
 struct SideReport {
@@ -465,7 +590,12 @@ fn join_report(id: &str, a: SideReport, b: SideReport) -> JoinReport {
         } else if diff > JOIN_TOLERANCE_MM {
             (false, format!("Stitch lines differ by {:.1} mm ({:.1} vs {:.1})", diff, a.stitch, b.stitch))
         } else {
-            (false, format!("Same length but {} vs {} holes: check the pricking iron spacing", a.holes, b.holes))
+            if a.holes.abs_diff(b.holes) == 1 {
+                // A hole on a corner counts for both edges that meet there.
+                (true, format!("Stitch lines match: {:.1} mm, {} and {} holes (one is shared at a corner)", a.stitch, a.holes, b.holes))
+            } else {
+                (false, format!("Same length but {} vs {} holes: check the pricking iron spacing", a.holes, b.holes))
+            }
         }
     } else {
         let diff = (a.length - b.length).abs();
@@ -508,6 +638,9 @@ mod tests {
             holes: vec![],
             grain_deg: 0.0,
             notes: String::new(),
+            hardware: vec![],
+            marks: vec![],
+            place: None,
         }
     }
 

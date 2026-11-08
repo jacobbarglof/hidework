@@ -72,7 +72,112 @@ fn base_piece(name: &str, material_id: &str, at: Vec2) -> Piece {
         holes: vec![],
         grain_deg: 0.0,
         notes: String::new(),
+        hardware: vec![],
+        marks: vec![],
+        place: None,
     }
+}
+
+/// A plain `w` by `h` rectangle: edge 0 top, 1 right, 2 bottom, 3 left (y down).
+pub fn panel(id: &str, name: &str, material_id: &str, w: f64, h: f64) -> Piece {
+    let mut pc = base_piece(name, material_id, v(0.0, 0.0));
+    pc.id = id.into();
+    pc.vertices = vec![v(0.0, 0.0), v(w, 0.0), v(w, h), v(0.0, h)];
+    pc.edges = (0..4).map(|_| Edge::line(false)).collect();
+    pc.grain_deg = 90.0;
+    pc
+}
+
+/// A panel with rounded bottom corners: edges 0 top, 1 right, 2 corner, 3 bottom, 4 corner,
+/// 5 left. With no radius it is a plain rectangle (edges 0 to 3).
+pub fn panel_rounded_bottom(id: &str, name: &str, material_id: &str, w: f64, h: f64, r: f64) -> Piece {
+    let r = r.clamp(0.0, (w / 2.0).min(h) - 1.0);
+    if r < 0.5 {
+        return panel(id, name, material_id, w, h);
+    }
+    let mut pc = base_piece(name, material_id, v(0.0, 0.0));
+    pc.id = id.into();
+    pc.vertices = vec![v(0.0, 0.0), v(w, 0.0), v(w, h - r), v(w - r, h), v(r, h), v(0.0, h - r)];
+    pc.edges = vec![
+        Edge::line(false),
+        Edge::line(false),
+        Edge::new(EdgeKind::Cubic { c1: v(w, h - r + r * K), c2: v(w - r + r * K, h) }, false),
+        Edge::line(false),
+        Edge::new(EdgeKind::Cubic { c1: v(r - r * K, h), c2: v(0.0, h - r + r * K) }, false),
+        Edge::line(false),
+    ];
+    pc.grain_deg = 90.0;
+    pc
+}
+
+/// An ellipse `w` by `h` from four cubic edges (bucket bag bottoms, round patches).
+pub fn ellipse(id: &str, name: &str, material_id: &str, w: f64, h: f64) -> Piece {
+    let (a, b) = (w / 2.0, h / 2.0);
+    let mut pc = base_piece(name, material_id, v(0.0, 0.0));
+    pc.id = id.into();
+    pc.vertices = vec![v(a, 0.0), v(w, b), v(a, h), v(0.0, b)];
+    pc.edges = vec![
+        Edge::new(EdgeKind::Cubic { c1: v(a + a * K, 0.0), c2: v(w, b - b * K) }, false),
+        Edge::new(EdgeKind::Cubic { c1: v(w, b + b * K), c2: v(a + a * K, h) }, false),
+        Edge::new(EdgeKind::Cubic { c1: v(a - a * K, h), c2: v(0.0, b + b * K) }, false),
+        Edge::new(EdgeKind::Cubic { c1: v(0.0, b - b * K), c2: v(a - a * K, 0.0) }, false),
+    ];
+    pc
+}
+
+/// Round off corner `vertex` of a straight-edged corner with radius `r` (a corner punch).
+pub fn round_corner(pc: &mut Piece, vertex: usize, r: f64) -> Result<(), String> {
+    let n = pc.vertices.len();
+    if vertex >= n || n < 3 {
+        return Err("No such corner".into());
+    }
+    let prev = (vertex + n - 1) % n;
+    if !matches!(pc.edges[prev].kind, EdgeKind::Line) || !matches!(pc.edges[vertex].kind, EdgeKind::Line) {
+        return Err("Both edges at the corner must be straight".into());
+    }
+    let (a, p, b) = (pc.vertices[prev], pc.vertices[vertex], pc.vertices[(vertex + 1) % n]);
+    let (u, w) = ((a - p).normalized(), (b - p).normalized());
+    let cos = u.dot(w).clamp(-1.0, 1.0);
+    let half = cos.acos() / 2.0;
+    if half < 0.05 || half > 1.52 {
+        return Err("The corner is too sharp or too flat to round".into());
+    }
+    // Tangent points sit r / tan(half) from the corner.
+    let d = (r / half.tan()).min(a.dist(p) * 0.49).min(b.dist(p) * 0.49);
+    let (t1, t2) = (p + u * d, p + w * d);
+    // Cubic approximation of the arc between the tangent points.
+    let k = 4.0 / 3.0 * ((std::f64::consts::PI - 2.0 * half) / 4.0).tan() * (d * half.tan());
+    let c1 = t1 - u * k;
+    let c2 = t2 - w * k;
+    let stitched = pc.edges[vertex].stitched || pc.edges[prev].stitched;
+    let template = pc.edges[vertex].clone();
+    pc.vertices[vertex] = t1;
+    pc.vertices.insert(vertex + 1, t2);
+    pc.edges.insert(vertex, Edge { kind: EdgeKind::Cubic { c1, c2 }, stitched, ..template });
+    Ok(())
+}
+
+/// A V-shaped dart cut into edge `edge` at fraction `t` along it, `width` across the mouth and
+/// `depth` deep. Returns the indices of the two new edges, which sew together.
+pub fn add_dart(pc: &mut Piece, edge: usize, t: f64, width: f64, depth: f64) -> Result<(usize, usize), String> {
+    let n = pc.vertices.len();
+    if edge >= n || !matches!(pc.edges[edge].kind, EdgeKind::Line) {
+        return Err("Darts go on straight edges".into());
+    }
+    let (a, b) = (pc.vertices[edge], pc.vertices[(edge + 1) % n]);
+    let len = a.dist(b);
+    let dir = (b - a).normalized();
+    let s = crate::geom::signed_area(&pc.vertices);
+    // Inward normal (y down coordinates follow the same winding rule as offsets).
+    let inward = dir.left() * if s > 0.0 { 1.0 } else { -1.0 };
+    let mid = (t.clamp(0.1, 0.9)) * len;
+    let w = width.min(len * 0.4);
+    let (m1, m2) = (a + dir * (mid - w / 2.0), a + dir * (mid + w / 2.0));
+    let apex = a + dir * mid + inward * depth.min(len);
+    let base = pc.edges[edge].clone();
+    pc.vertices.splice(edge + 1..edge + 1, [m1, apex, m2]);
+    pc.edges.splice(edge + 1..edge + 1, [Edge::line(base.stitched), Edge::line(base.stitched), base.clone()]);
+    Ok((edge + 1, edge + 2))
 }
 
 /// A strap laid out along +x: buckle end at x = 0, tip at x = length.

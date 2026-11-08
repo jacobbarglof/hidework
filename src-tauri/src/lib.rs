@@ -3,7 +3,9 @@
 
 mod control;
 
+use hidework_core::bags::{self, BagParams, BagStyle};
 use hidework_core::bom::{self, Bom};
+use hidework_core::{arrange, craft};
 use hidework_core::drape::{self, DrapeRequest, DrapeResult};
 use hidework_core::fab::{self, FabOptions};
 use hidework_core::generators::{self, StrapParams};
@@ -156,6 +158,71 @@ fn make_lining(project: Project, piece: String, inset: f64, id: String) -> Res<P
     let src = project.piece(&piece).ok_or("No such piece")?;
     let cp = c.pieces.iter().find(|p| p.id == piece).ok_or("That piece has no outline yet")?;
     Ok(generators::lining(src, &cp.outline, inset, &id))
+}
+
+/// Everything a leatherworker picks from: stitches, threads, seam constructions, glues, edge
+/// finishes and hardware.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Catalogue {
+    stitches: Vec<craft::StitchInfo>,
+    threads: Vec<craft::ThreadInfo>,
+    constructions: Vec<craft::ConstructionInfo>,
+    adhesives: Vec<craft::AdhesiveInfo>,
+    finishes: Vec<craft::FinishInfo>,
+    hardware: Vec<craft::HardwareInfo>,
+}
+
+#[tauri::command]
+fn craft_catalogue() -> Catalogue {
+    Catalogue {
+        stitches: craft::stitches(),
+        threads: craft::threads(),
+        constructions: craft::constructions(),
+        adhesives: craft::adhesives(),
+        finishes: craft::finishes(),
+        hardware: craft::hardware(),
+    }
+}
+
+#[tauri::command]
+fn make_bag(params: BagParams) -> Project {
+    bags::bag(&params)
+}
+
+#[tauri::command]
+fn bag_defaults(style: BagStyle) -> BagParams {
+    BagParams::style_defaults(style)
+}
+
+#[tauri::command]
+fn round_corner(mut piece: Piece, vertex: usize, radius: f64) -> Res<Piece> {
+    generators::round_corner(&mut piece, vertex, radius)?;
+    Ok(piece)
+}
+
+#[tauri::command]
+fn add_dart(mut piece: Piece, edge: usize, at: f64, width: f64, depth: f64) -> Res<(Piece, (usize, usize))> {
+    let e = generators::add_dart(&mut piece, edge, at, width, depth)?;
+    Ok((piece, e))
+}
+
+/// Where a pattern point lands in 3D (for placing matching hardware through two pieces).
+#[tauri::command]
+fn arrange_point(project: Project, piece: String, at: Vec2) -> Res<[f64; 3]> {
+    let c = compute(&project);
+    let pc = project.piece(&piece).ok_or("No such piece")?;
+    let cp = c.pieces.iter().find(|p| p.id == piece).ok_or("That piece has no outline yet")?;
+    Ok(arrange::frame(&project, pc, cp).map([at.x, at.y, 0.0]))
+}
+
+/// The pattern point of a piece nearest a 3D point.
+#[tauri::command]
+fn arrange_inverse(project: Project, piece: String, world: [f64; 3]) -> Res<Vec2> {
+    let c = compute(&project);
+    let pc = project.piece(&piece).ok_or("No such piece")?;
+    let cp = c.pieces.iter().find(|p| p.id == piece).ok_or("That piece has no outline yet")?;
+    Ok(arrange::frame(&project, pc, cp).inverse(world))
 }
 
 // ---------- live simulation ----------
@@ -348,6 +415,27 @@ fn control_reply(pending: State<'_, Arc<control::Pending>>, id: u64, value: serd
     control::reply(&pending, id, value);
 }
 
+/// The interface has started listening for agent calls.
+#[tauri::command]
+fn control_ready() {
+    control::set_ready();
+}
+
+/// A .hidework file the app was opened with (double-click in Explorer), if any.
+#[tauri::command]
+fn startup_file() -> Option<String> {
+    std::env::args().skip(1).find(|a| a.to_lowercase().ends_with(".hidework") && std::path::Path::new(a).is_file())
+}
+
+/// Where hidework-mcp.exe sits next to this app, for the "Connect an AI agent" help.
+#[tauri::command]
+fn mcp_path() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let p = dir.join("hidework-mcp.exe");
+    p.exists().then(|| p.to_string_lossy().into_owned())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let pending = Arc::new(control::Pending::default());
@@ -389,6 +477,16 @@ pub fn run() {
             make_strap,
             make_gusset,
             make_lining,
+            craft_catalogue,
+            make_bag,
+            bag_defaults,
+            round_corner,
+            add_dart,
+            arrange_point,
+            arrange_inverse,
+            startup_file,
+            mcp_path,
+            control_ready,
             sim_start,
             sim_stop,
             sim_step,

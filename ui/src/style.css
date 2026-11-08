@@ -1016,3 +1016,38 @@ table.report {
   font-size: 9.5px;
   letter-spacing: 0.04em;
 }
+
+/* Fusion-style ViewCube in the 3D window's top-right corner. */
+.viewcube {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 104px;
+  height: 104px;
+  z-index: 3;
+}
+
+#view3d .viewcube canvas {
+  width: 104px;
+  height: 104px;
+}
+
+.viewcube-home {
+  position: absolute;
+  top: -2px;
+  left: -6px;
+  width: 22px;
+  height: 22px;
+  border: 1px solid #8995a2;
+  border-radius: 4px;
+  background: #eef1f4;
+  color: #3b4652;
+  font-size: 14px;
+  line-height: 18px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.viewcube-home:hover {
+  background: #ffffff;
+}

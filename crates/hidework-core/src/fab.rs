@@ -64,12 +64,24 @@ pub fn parts(project: &Project, computed: &ComputedProject, o: &FabOptions) -> V
         let Some(piece) = project.piece(&cp.id) else { continue };
         let off = piece.position;
         let mut holes = Vec::new();
+        let mut slots = Vec::new();
         if o.include_stitch_holes {
             for run in &cp.stitch_runs {
-                holes.extend(run.holes.iter().map(|&h| (h + off, o.stitch_hole_mm)));
+                if run.lace {
+                    // Lacing slits as thin slots along the line.
+                    let n = run.holes.len();
+                    for k in 0..n {
+                        let dir = run.holes[(k + 1).min(n - 1)] - run.holes[k.saturating_sub(1)];
+                        let slot = crate::model::Hole { id: String::new(), center: run.holes[k], diameter_mm: o.stitch_hole_mm.max(0.8), label: String::new(), length_mm: piece.stitch.hole_mm.max(o.stitch_hole_mm + 0.5), angle_deg: dir.y.atan2(dir.x).to_degrees() };
+                        if let Some(s) = crate::generators::slot_outline(&slot) {
+                            slots.push(s.into_iter().map(|p| p + off).collect());
+                        }
+                    }
+                } else {
+                    holes.extend(run.holes.iter().map(|&h| (h + off, o.stitch_hole_mm)));
+                }
             }
         }
-        let mut slots = Vec::new();
         if o.include_punch_holes {
             for h in &cp.holes {
                 match crate::generators::slot_outline(h) {

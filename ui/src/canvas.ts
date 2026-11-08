@@ -24,7 +24,9 @@ type Drag =
   | { kind: "vertex"; id: string; index: number; start: V; orig: V; moved: boolean }
   | { kind: "ctrl"; id: string; edge: number; which: 0 | 1; start: V; orig: V; moved: boolean }
   | { kind: "hole"; id: string; hid: string; start: V; orig: V; moved: boolean }
-  | { kind: "fold"; id: string; fid: string; start: V; orig: number; moved: boolean };
+  | { kind: "fold"; id: string; fid: string; start: V; orig: number; moved: boolean }
+  | { kind: "hardware"; id: string; hid: string; start: V; orig: V; moved: boolean }
+  | { kind: "mark"; id: string; mid: string; start: V; orig: V; moved: boolean };
 let drag: Drag | null = null;
 let measure: { a: V; b: V; active: boolean } | null = null;
 let drawRect: { a: V; b: V } | null = null;
@@ -308,12 +310,43 @@ function drawPiece(pc: Piece, cp: ComputedPiece, selected: boolean): void {
   ctx.fillStyle = INK;
   const hr = Math.max(1.1, (pc.stitch.holeMm / 2) * s);
   for (const run of cp.stitchRuns) {
-    for (const h of run.holes) {
+    const n = run.holes.length;
+    run.holes.forEach((h, k) => {
       const p = toScreen(addV(h, off));
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, hr, 0, Math.PI * 2);
-      ctx.fill();
-    }
+      if (run.lace) {
+        const a = run.holes[Math.max(0, k - 1)];
+        const b = run.holes[Math.min(n - 1, k + 1)];
+        const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+        const half = (pc.stitch.holeMm / 2) * s;
+        const dx = ((b.x - a.x) / len) * half;
+        const dy = ((b.y - a.y) / len) * half;
+        ctx.strokeStyle = INK;
+        ctx.lineWidth = Math.max(1.4, 0.9 * s);
+        ctx.beginPath();
+        ctx.moveTo(p.x - dx, p.y - dy);
+        ctx.lineTo(p.x + dx, p.y + dy);
+        ctx.stroke();
+      } else {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, hr, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    });
+  }
+  // Glue bands and crease lines.
+  for (const line of cp.glue ?? []) {
+    path(line, off, false);
+    ctx.setLineDash([1.5, 3]);
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = "rgba(176,138,62,0.95)";
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  for (const line of cp.creases ?? []) {
+    path(line, off, false);
+    ctx.lineWidth = 0.8;
+    ctx.strokeStyle = "rgba(43,29,14,0.45)";
+    ctx.stroke();
   }
   // Folds.
   for (const f of cp.folds) {
@@ -378,6 +411,8 @@ function drawPiece(pc: Piece, cp: ComputedPiece, selected: boolean): void {
     ctx.lineTo(p.x, p.y + r + 4);
     ctx.stroke();
   }
+  drawMarks(pc, cp, off);
+  drawHardware(pc, cp, off);
   // Name.
   const c = toScreen(addV({ x: (cp.bounds.min.x + cp.bounds.max.x) / 2, y: (cp.bounds.min.y + cp.bounds.max.y) / 2 }, off));
   ctx.fillStyle = selected ? OXBLOOD : "rgba(43,29,14,0.85)";
@@ -387,6 +422,101 @@ function drawPiece(pc: Piece, cp: ComputedPiece, selected: boolean): void {
   ctx.font = `italic ${Math.max(10, Math.min(15, 3 * s))}px 'EB Garamond', serif`;
   ctx.fillText(`cut ${pc.cutCount}  ·  ${cp.materialName}`, c.x, c.y + Math.max(14, Math.min(22, 5 * s)));
   ctx.textAlign = "left";
+}
+
+function drawMarks(pc: Piece, cp: ComputedPiece, off: V): void {
+  const s = view.scale;
+  for (const mk of cp.marks ?? []) {
+    const sel = state.sel.kind === "mark" && state.sel.id === mk.id;
+    const c = toScreen(addV(mk.center, off));
+    ctx.save();
+    ctx.translate(c.x, c.y);
+    ctx.rotate(((mk.angleDeg ?? 0) * Math.PI) / 180);
+    const w = mk.size.x * s;
+    const hgt = mk.size.y * s;
+    if (mk.kind === "paint") {
+      ctx.fillStyle = mk.pattern || "#1d1d1f";
+      ctx.globalAlpha = 0.55;
+      ctx.fillRect(-w / 2, -hgt / 2, w, hgt);
+      ctx.globalAlpha = 1;
+    } else if (mk.kind === "tooling") {
+      ctx.strokeStyle = "rgba(90,52,24,0.55)";
+      ctx.lineWidth = 1;
+      const step = Math.max(6, 4 * s);
+      for (let x = -w / 2; x < w / 2; x += step) {
+        ctx.beginPath();
+        ctx.arc(x + step / 2, 0, step / 2, 0, Math.PI);
+        ctx.stroke();
+      }
+    }
+    if (mk.kind !== "perforate") {
+      ctx.setLineDash([5, 3]);
+      ctx.strokeStyle = sel ? OXBLOOD : "rgba(43,29,14,0.7)";
+      ctx.lineWidth = sel ? 2 : 1;
+      ctx.strokeRect(-w / 2, -hgt / 2, w, hgt);
+      ctx.setLineDash([]);
+      ctx.fillStyle = sel ? OXBLOOD : INK;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      const label = mk.text || mk.kind;
+      ctx.font = `${mk.kind === "text" || mk.kind === "stamp" ? "600 " : "italic "}${Math.max(9, Math.min(hgt * 0.6, 16))}px ${mk.kind === "text" ? "Cinzel, serif" : "'EB Garamond', serif"}`;
+      ctx.fillText(label, 0, 0, w * 0.95);
+      ctx.textBaseline = "alphabetic";
+      ctx.textAlign = "left";
+    } else if (sel) {
+      ctx.strokeStyle = OXBLOOD;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(-w / 2, -hgt / 2, w, hgt);
+    }
+    ctx.restore();
+  }
+  void pc;
+}
+
+/** Hardware as small symbols in brass over the holes it needs. */
+function drawHardware(pc: Piece, cp: ComputedPiece, off: V): void {
+  const s = view.scale;
+  for (const hw of cp.hardware ?? []) {
+    const sel = state.sel.kind === "hardware" && state.sel.id === hw.id;
+    const c = toScreen(addV(hw.at, off));
+    const size = (hw.sizeMm || 0) * s;
+    ctx.save();
+    ctx.translate(c.x, c.y);
+    ctx.rotate(((hw.angleDeg ?? 0) * Math.PI) / 180);
+    ctx.strokeStyle = sel ? OXBLOOD : GOLD;
+    ctx.fillStyle = "rgba(176,138,62,0.18)";
+    ctx.lineWidth = sel ? 2.2 : 1.4;
+    const r = Math.max(6, (size || 10 * s) / 2);
+    const k = hw.kind;
+    ctx.beginPath();
+    if (k === "d-ring") {
+      ctx.moveTo(-r, -r * 0.2);
+      ctx.lineTo(r, -r * 0.2);
+      ctx.arc(0, -r * 0.2, r, 0, Math.PI);
+    } else if (k === "square-ring" || k === "buckle") {
+      ctx.rect(-r, -r * 0.7, 2 * r, 1.4 * r);
+    } else if (k === "zipper") {
+      const half = ((hw.sizeMm || 180) / 2) * s;
+      ctx.rect(-half, -4 * s, 2 * half, 8 * s);
+    } else if (k === "plaque") {
+      ctx.rect(-r, -r * 0.4, 2 * r, 0.8 * r);
+    } else if (k.startsWith("turnlock")) {
+      ctx.rect(-r * 0.6, -r * 0.4, 1.2 * r, 0.8 * r);
+    } else {
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+    }
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+    if (sel || s > 2.5) {
+      ctx.fillStyle = sel ? OXBLOOD : "rgba(43,29,14,0.7)";
+      ctx.font = `italic ${Math.max(10, Math.min(13, 2.6 * s))}px 'EB Garamond', serif`;
+      ctx.textAlign = "center";
+      ctx.fillText(hw.label || k.replace(/-/g, " "), c.x, c.y + r + 12);
+      ctx.textAlign = "left";
+    }
+  }
+  void pc;
 }
 
 function drawEdgeHighlight(pc: Piece, cp: ComputedPiece, e: number, color: string, width: number): void {
@@ -627,11 +757,40 @@ function hitHandle(w: V): { kind: "vertex"; index: number } | { kind: "ctrl"; ed
   return null;
 }
 
+function hitHardware(w: V): { piece: string; id: string } | null {
+  for (const pc of state.project.pieces) {
+    const cp = computedPiece(pc.id);
+    if (!cp) continue;
+    for (const hw of cp.hardware ?? []) {
+      const r = Math.max(5, (hw.sizeMm || 10) / 2);
+      if (dist(w, addV(hw.at, pc.position)) < Math.max(r, 8 / view.scale)) return { piece: pc.id, id: hw.id };
+    }
+  }
+  return null;
+}
+
+function hitMark(w: V): { piece: string; id: string } | null {
+  for (const pc of state.project.pieces) {
+    const cp = computedPiece(pc.id);
+    if (!cp) continue;
+    for (const mk of cp.marks ?? []) {
+      const d = { x: w.x - pc.position.x - mk.center.x, y: w.y - pc.position.y - mk.center.y };
+      const a = (-(mk.angleDeg ?? 0) * Math.PI) / 180;
+      const lx = d.x * Math.cos(a) - d.y * Math.sin(a);
+      const ly = d.x * Math.sin(a) + d.y * Math.cos(a);
+      if (Math.abs(lx) <= mk.size.x / 2 && Math.abs(ly) <= mk.size.y / 2) return { piece: pc.id, id: mk.id };
+    }
+  }
+  return null;
+}
+
 function hitHole(w: V): { piece: string; id: string } | null {
   for (const pc of state.project.pieces) {
     const cp = computedPiece(pc.id);
     if (!cp) continue;
     for (const h of cp.holes) {
+      // Holes that hardware or perforation make are edited through their owner.
+      if (h.id.includes("#")) continue;
       if (dist(w, addV(h.center, pc.position)) < Math.max(h.diameterMm / 2, 7 / view.scale)) return { piece: pc.id, id: h.id };
     }
   }
@@ -689,6 +848,25 @@ function onDown(e: MouseEvent): void {
     requestDraw();
     return;
   }
+  if (state.tool === "hardware" || state.tool === "mark") {
+    const id = hitPiece(w);
+    if (!id) return;
+    const pc = piece(id)!;
+    const d = toDesign(computedPiece(id), { x: w.x - pc.position.x, y: w.y - pc.position.y });
+    const at = { x: snap(d.x, e), y: snap(d.y, e) };
+    if (state.tool === "hardware") {
+      const hid = uid("hw");
+      edit(() => (pc.hardware = [...(pc.hardware ?? []), { id: hid, kind: placing.kind, at, angleDeg: 0, sizeMm: 0 }]));
+      state.sel = { kind: "hardware", piece: id, id: hid };
+    } else {
+      const mid = uid("mk");
+      const m = placing.mark;
+      edit(() => (pc.marks = [...(pc.marks ?? []), { id: mid, kind: m.kind, center: at, size: { ...m.size }, angleDeg: 0, text: m.text, pattern: m.pattern }]));
+      state.sel = { kind: "mark", piece: id, id: mid };
+    }
+    notify();
+    return;
+  }
   if (state.tool === "hole" || state.tool === "fold") {
     const id = hitPiece(w);
     if (!id) return;
@@ -744,6 +922,14 @@ function onDown(e: MouseEvent): void {
     notify();
     return;
   }
+  const hw = hitHardware(w);
+  if (hw) {
+    state.sel = { kind: "hardware", piece: hw.piece, id: hw.id };
+    const x = piece(hw.piece)!.hardware!.find((q) => q.id === hw.id)!;
+    drag = { kind: "hardware", id: hw.piece, hid: hw.id, start: w, orig: { ...x.at }, moved: false };
+    notify();
+    return;
+  }
   const hole = hitHole(w);
   if (hole) {
     state.sel = { kind: "hole", piece: hole.piece, id: hole.id };
@@ -751,6 +937,19 @@ function onDown(e: MouseEvent): void {
     drag = { kind: "hole", id: hole.piece, hid: hole.id, start: w, orig: { ...hd.center }, moved: false };
     notify();
     return;
+  }
+  const mark = hitMark(w);
+  if (mark) {
+    const pcm = piece(mark.piece)!;
+    // A click inside a mark selects the mark only when that piece is already selected; otherwise
+    // it selects (and drags) the piece as usual.
+    if (selectedPieceId() === mark.piece || state.sel.kind === "mark") {
+      state.sel = { kind: "mark", piece: mark.piece, id: mark.id };
+      const x = pcm.marks!.find((q) => q.id === mark.id)!;
+      drag = { kind: "mark", id: mark.piece, mid: mark.id, start: w, orig: { ...x.center }, moved: false };
+      notify();
+      return;
+    }
   }
   const fold = hitFold(w);
   if (fold) {
@@ -847,6 +1046,16 @@ function onMove(e: MouseEvent): void {
     case "fold": {
       const fd = pc.folds.find((x) => x.id === (drag as { fid: string }).fid);
       if (fd) fd.position = snap(drag.orig + (fd.orientation === "horizontal" ? dy : dx), e);
+      break;
+    }
+    case "hardware": {
+      const x = (pc.hardware ?? []).find((q) => q.id === (drag as { hid: string }).hid);
+      if (x) x.at = { x: snap(drag.orig.x + dx, e), y: snap(drag.orig.y + dy, e) };
+      break;
+    }
+    case "mark": {
+      const x = (pc.marks ?? []).find((q) => q.id === (drag as { mid: string }).mid);
+      if (x) x.center = { x: snap(drag.orig.x + dx, e), y: snap(drag.orig.y + dy, e) };
       break;
     }
   }

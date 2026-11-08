@@ -11,9 +11,10 @@ import { colorFor } from "./textures";
 import { OZ_MM } from "./units";
 import { OBJECT_PRESETS, bounds, dropObject, removeSceneItem, setProps, sim3d } from "./view3d";
 import type { Prop } from "./simtypes";
+import { MARKS, finishAll, loadCatalogue } from "./craftpanels";
 
 type BrowserTab = "pieces" | "fabrics" | "seams" | "scene";
-type LibraryTab = "templates" | "fabrics" | "hardware" | "objects" | "props";
+type LibraryTab = "templates" | "bags" | "fabrics" | "hardware" | "finishing" | "objects" | "props";
 const ui = { browser: "pieces" as BrowserTab, library: "templates" as LibraryTab };
 
 
@@ -69,7 +70,10 @@ function browserBody(): Node[] {
     const out: Node[] = [];
     for (const j of p.joins) {
       const rep = state.computed?.joins.find((r) => r.id === j.id);
-      out.push(h("div", { class: `seam ${rep?.ok ? "ok" : "bad"}`, onclick: select({ kind: "join", id: j.id }) }, h("strong", {}, `${seamName(j.a)} ↔ ${seamName(j.b)}`), h("span", {}, rep?.message ?? "…")));
+      const con = loadCatalogue()?.constructions.find((c) => c.construction === (j.construction ?? "edgeToEdge"))?.name ?? "";
+      const glue = j.glue && j.glue !== "none" ? " · glued" : "";
+      const other = j.b.edges.length ? seamName(j.b) : `face of ${state.project.pieces.find((x) => x.id === j.b.pieceId)?.name ?? "?"}`;
+      out.push(h("div", { class: `seam ${rep?.ok ? "ok" : "bad"}`, onclick: select({ kind: "join", id: j.id }) }, h("strong", {}, `${seamName(j.a)} ↔ ${other}`), h("span", {}, `${con}${glue} · ${rep?.message ?? "…"}`)));
     }
     if (!p.joins.length) out.push(h("p", { class: "hint" }, "Segment sewing (S): click an edge, then the edge it sews to."));
     return out;
@@ -91,7 +95,7 @@ function browserBody(): Node[] {
 
 export function renderLibrary(el: HTMLElement): void {
   rerender(el, () => [
-    tabs<LibraryTab>([["templates", "Patterns"], ["fabrics", "Fabrics"], ["hardware", "Hardware"], ["objects", "Objects"], ["props", "Props"]], ui.library, (t) => (ui.library = t)),
+    tabs<LibraryTab>([["templates", "Patterns"], ["bags", "Bags"], ["fabrics", "Fabrics"], ["hardware", "Hardware"], ["finishing", "Finishing"], ["objects", "Objects"], ["props", "Props"]], ui.library, (t) => (ui.library = t)),
     h("div", { class: "tab-body" }, ...libraryBody()),
   ]);
 }
@@ -162,30 +166,121 @@ function libraryBody(): Node[] {
       ),
     ];
   }
-  if (ui.library === "hardware") {
-    const hw: [string, string, number, number][] = [
-      ["Rivet", "Double-cap rivet hole", 3, 0],
-      ["Snap", "Line 24 style snap hole", 4, 0],
-      ["Chicago screw", "Screw post hole", 4.5, 0],
-      ["Sam Browne stud", "Stud hole", 4, 0],
-      ["Strap slot", "Slot for a 20 mm strap", 4, 22],
-      ["Buckle tongue", "Tongue slot", 4, 20],
-      ["Punch 2 mm", "Plain round hole", 2, 0],
-      ["Punch 3 mm", "Plain round hole", 3, 0],
+  if (ui.library === "bags") {
+    const bags: [string, string, string][] = [
+      ["tote", "Tote", "Gusset, handles, pocket"],
+      ["boxed-tote", "Boxed tote", "Five panels, square corners"],
+      ["messenger", "Messenger", "Flap, turn lock, strap"],
+      ["bucket", "Bucket bag", "Oval base, grommets"],
+      ["zip-pouch", "Zip pouch", "Two panels and a zip"],
     ];
     return [
-      h("p", { class: "hint" }, "Pick hardware, then click the pattern in the 2D window to place it. Check sizes against your own hardware."),
+      h("p", { class: "hint" }, "Complete bags with every seam, rivet and closure placed and arranged in 3D. Open one as it is, or set your own sizes in the builder."),
+      h("div", { class: "btn-row" }, h("button", { class: "btn primary", type: "button", onclick: () => { panel.special = "bag"; notify(); } }, "Bag builder…")),
+      h("div", { class: "lib-grid" }, ...bags.map(([id, name, desc]) => item(name, desc, async () => {
+        if (state.dirty && !confirm("Discard unsaved changes?")) return;
+        setProject(await api.fromTemplate(id), null);
+        setStatus(`${name}: pieces arranged on the form. Press Space to simulate.`);
+      }))),
+    ];
+  }
+  if (ui.library === "hardware") {
+    const cat = loadCatalogue();
+    const punches: [string, string, number, number][] = [
+      ["Punch 2 mm", "Plain round hole", 2, 0],
+      ["Punch 3 mm", "Plain round hole", 3, 0],
+      ["Punch 4 mm", "Plain round hole", 4, 0],
+      ["Strap slot", "Slot for a 20 mm strap", 4, 22],
+    ];
+    const groups = [...new Set((cat?.hardware ?? []).map((x) => x.group))];
+    const out: Node[] = [h("p", { class: "hint" }, "Pick hardware, then click the pattern to set it. Each one adds the holes, slits or window it needs and its weight; in 3D it is drawn and fastens to matching hardware it touches.")];
+    for (const g of groups) {
+      out.push(h("div", { class: "section-head" }, h("h2", {}, g)));
+      out.push(
+        h(
+          "div",
+          { class: "lib-grid" },
+          ...(cat?.hardware ?? []).filter((x) => x.group === g).map((x) =>
+            item(x.name, x.description, () => {
+              placing.kind = x.id;
+              setTool2d("hardware");
+              setStatus(`Click a piece to set: ${x.name}.`);
+            }, { active: placing.kind === x.id && state.tool === "hardware" }),
+          ),
+        ),
+      );
+    }
+    out.push(h("div", { class: "section-head" }, h("h2", {}, "Plain punches")));
+    out.push(
       h(
         "div",
         { class: "lib-grid" },
-        ...hw.map(([label, desc, d, l]) =>
+        ...punches.map(([label, desc, d, l]) =>
           item(label, `${desc} · ${d} mm${l ? ` × ${l}` : ""}`, () => {
             placing.hardware = { label, diameterMm: d, lengthMm: l };
             setTool2d("hole");
-            setStatus(`Click a piece to place: ${label}.`);
+            setStatus(`Click a piece to punch: ${label}.`);
           }, { active: placing.hardware?.label === label && state.tool === "hole" }),
         ),
       ),
+    );
+    return out;
+  }
+  if (ui.library === "finishing") {
+    const cat = loadCatalogue();
+    const target = selectedPieceId();
+    const pc = target ? state.project.pieces.find((x) => x.id === target) : undefined;
+    const markDesc: Record<string, string> = {
+      stamp: "A maker's mark or stamp",
+      tooling: "Carved and tooled area",
+      emboss: "Raised or pressed design",
+      engrave: "Laser or hand engraving",
+      paint: "Dyed or painted area",
+      text: "Stamped or engraved letters",
+      perforate: "Grid of punched holes",
+    };
+    return [
+      h("div", { class: "section-head" }, h("h2", {}, "Surface work")),
+      h("p", { class: "hint" }, "Pick one, then click the pattern to place it. Drag to move; size it in the properties."),
+      h(
+        "div",
+        { class: "lib-grid" },
+        ...MARKS.map(([k, name]) =>
+          item(name, markDesc[k] ?? name, () => {
+            placing.mark = {
+              kind: k,
+              size: k === "text" ? { x: 50, y: 10 } : k === "stamp" ? { x: 25, y: 25 } : { x: 60, y: 40 },
+              text: k === "text" ? "HIDEWORK" : "",
+              pattern: k === "tooling" ? "floral" : k === "perforate" ? "6/2" : k === "paint" ? "#1d1d1f" : "",
+            };
+            setTool2d("mark");
+            setStatus(`Click a piece to place: ${name}.`);
+          }, { active: state.tool === "mark" && placing.mark.kind === k }),
+        ),
+      ),
+      h("div", { class: "section-head" }, h("h2", {}, "Stitch")),
+      h("p", { class: "hint" }, pc ? `Click to use on ${pc.name}.` : "Select a piece first."),
+      h(
+        "div",
+        { class: "lib-grid" },
+        ...(cat?.stitches ?? []).map((st) =>
+          item(st.name, `${st.group} · ${st.threadFactor}× seam`, () => {
+            if (!pc) return setStatus("Select a piece first.");
+            edit(() => {
+              const was = cat?.stitches.find((k) => k.kind === (pc.stitch.kind ?? "saddle"));
+              pc.stitch.kind = st.kind;
+              if (st.lace !== !!was?.lace) {
+                pc.stitch.pitchMm = st.defaultPitchMm;
+                pc.stitch.holeMm = st.lace ? 3 : 1;
+                if (st.lace) pc.stitch.marginMm = Math.max(pc.stitch.marginMm, 4);
+              }
+            });
+            setStatus(`${pc.name}: ${st.name}.`);
+          }, { active: pc?.stitch.kind === st.kind }),
+        ),
+      ),
+      h("div", { class: "section-head" }, h("h2", {}, "Edges")),
+      h("div", { class: "lib-grid" }, ...(cat?.finishes ?? []).map((f) => item(f.name, f.description, () => (pc ? finishAll(pc, f.finish) : setStatus("Select a piece first."))))),
     ];
   }
   if (ui.library === "objects") {

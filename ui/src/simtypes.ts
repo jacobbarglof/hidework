@@ -28,10 +28,13 @@ export interface SimInfo {
   rest: number[];
   indices: number[];
   boundary: [number, number][];
-  stitches: { pieceId: string; closed: boolean; holes: SurfacePoint[] }[];
-  hardware: { pieceId: string; at: SurfacePoint; diameterMm: number; slotMm: number; angleDeg: number; label: string }[];
+  boundaryFinish: string[];
+  stitches: { pieceId: string; closed: boolean; holes: SurfacePoint[]; kind: string; lace: boolean; wrapsEdge: boolean; edge: SurfacePoint[]; hidden: number[]; row: number }[];
+  hardware: { pieceId: string; at: SurfacePoint; diameterMm: number; slotMm: number; angleDeg: number; label: string; kind: string; toward: SurfacePoint | null }[];
+  decor: { construction: string; pairs: [number, number][]; widthMm: number; thicknessMm: number; materialId: string | null }[];
   seams: number;
   fasteners: number;
+  laminated: number;
   warnings: string[];
 }
 

@@ -57,7 +57,7 @@ pub struct Sheet {
 }
 
 const MARGIN: f64 = 5.0;
-const HEADER: f64 = 34.0;
+const HEADER: f64 = 40.0;
 const MIN_WIDTH: f64 = 190.0;
 
 pub fn thickness_label(mm: f64) -> String {
@@ -83,9 +83,37 @@ pub fn build_sheet(project: &Project, computed: &ComputedProject) -> Sheet {
             shapes.push(Shape::Poly { pts: tr(&cp.outline), closed: true, style: Style::Finished });
         }
         for run in &cp.stitch_runs {
-            for &h in &run.holes {
-                shapes.push(Shape::Circle { c: h + off, r: piece.stitch.hole_mm / 2.0, style: Style::StitchHole, filled: true });
+            for (k, &h) in run.holes.iter().enumerate() {
+                if run.lace {
+                    // Lacing slits lie along the line, as long as the lace is wide.
+                    let n = run.holes.len();
+                    let dir = (run.holes[(k + 1).min(n - 1)] - run.holes[k.saturating_sub(1)]).normalized();
+                    let (a, b) = (h - dir * (piece.stitch.hole_mm / 2.0), h + dir * (piece.stitch.hole_mm / 2.0));
+                    shapes.push(Shape::Poly { pts: vec![a + off, b + off], closed: false, style: Style::Hardware });
+                } else {
+                    shapes.push(Shape::Circle { c: h + off, r: piece.stitch.hole_mm / 2.0, style: Style::StitchHole, filled: true });
+                }
             }
+        }
+        for line in &cp.glue {
+            shapes.push(Shape::Poly { pts: tr(line), closed: false, style: Style::FoldEdge });
+            let mid = line[line.len() / 2] + off;
+            shapes.push(Shape::Text { at: mid + v(0.0, -1.0), size: 2.0, text: "glue".into(), align: Align::Center, bold: false });
+        }
+        for line in &cp.creases {
+            shapes.push(Shape::Poly { pts: tr(line), closed: false, style: Style::Finished });
+        }
+        for mk in &cp.marks {
+            if mk.kind == crate::model::MarkKind::Perforate {
+                continue;
+            }
+            let (c, s) = (mk.angle_deg.to_radians().cos(), mk.angle_deg.to_radians().sin());
+            let (hw, hh) = (mk.size.x / 2.0, mk.size.y / 2.0);
+            let corner = |x: f64, y: f64| mk.center + v(x * c - y * s, x * s + y * c) + off;
+            shapes.push(Shape::Poly { pts: vec![corner(-hw, -hh), corner(hw, -hh), corner(hw, hh), corner(-hw, hh)], closed: true, style: Style::Finished });
+            let kind = format!("{:?}", mk.kind).to_lowercase();
+            let label = if mk.text.is_empty() { kind } else { format!("{kind}: {}", mk.text) };
+            shapes.push(Shape::Text { at: mk.center + off + v(0.0, 1.0), size: 2.4, text: label, align: Align::Center, bold: false });
         }
         for f in &cp.folds {
             for seg in f.start.iter().chain(f.end.iter()) {
@@ -179,7 +207,8 @@ fn header(project: &Project, shapes: &mut Vec<Shape>) {
     let lines = [
         (5.0, true, project.name.clone()),
         (2.8, false, "Print at Actual size (100%), then measure both squares.".to_string()),
-        (2.8, false, "Solid line: cut.  Dots: stitch holes.  Dash-dot: fold.  Crossed circles: punch.".to_string()),
+        (2.8, false, "Solid line: cut.  Dots: stitch holes (dashes: lacing slits).  Dash-dot: fold.  Crossed circles: punch.".to_string()),
+        (2.8, false, "Dotted inner line: glue to here.  Dashed: skive, crease or decoration area.".to_string()),
         (2.8, false, "Made with Hidework.".to_string()),
     ];
     let mut y = MARGIN + 5.0;

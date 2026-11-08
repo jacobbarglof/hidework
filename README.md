@@ -15,10 +15,26 @@ Open-source desktop software for designing leather goods (wallets, bags, journal
 - Bill of materials: hide area per material in ft² with cutting waste, cost from price per ft², seam length, thread estimate (4× seam), stitch holes, hardware list.
 - Starter templates: fold-over card wallet, belt, A5 journal cover.
 
+**Stitching, lacing and seams**
+- Twelve stitch types: saddle, machine lockstitch, running, back, cross, baseball, whip, blanket, and whip, single-loop, double-loop and cross lacing (slits instead of holes, lace instead of thread). One to four rows per piece.
+- Thread and lace catalogue (braided polyester, waxed linen, bonded nylon, goat, kangaroo and calf lace) with breaking strengths, used for seam strength and the thread or lace length to buy.
+- Seam constructions: edge to edge, turned (stitching hidden inside), lapped, butt, welted, piped, bound and zipper. A seam with no edges on one side sews a piece onto another's face (patch pockets, tabs).
+- Bonding: contact cement, water-based contact cement, PVA and double-sided tape; the template shows the band to glue, the bill of materials the area and grams. Laminates glue whole pieces face to face (linings, stiffeners, doubled straps).
+- Edge finishes: raw, burnished, painted, turned (folded, with its turn allowance added to the cut line and a skive zone) and bound; decorative crease lines.
+
+**Hardware and surface work**
+- 23 kinds of hardware: double-cap and copper rivets, Chicago screws, line 20 and 24 snaps, magnetic snaps, turn locks, Sam Browne studs, grommets and eyelets, bag feet, D, O and square rings, buckles, swivel clasps, key rings, zippers, name plates and conchos. Each adds the holes, slits or window it needs, its weight, and a 3D model in brass, nickel, gunmetal, copper or black; fasteners that meet through two layers hold them together in the simulation.
+- Stamps, tooling (floral, geometric, basketweave, border, pebble), embossing, engraving, paint and lettering, drawn onto the leather in 3D and marked on the template; perforation adds a staggered grid of holes.
+- Pattern tools: round a corner like a corner punch, cut a dart.
+
+**Bags**
+- A bag builder makes a complete tote, boxed tote, messenger with a flap, bucket bag or zip pouch from its width, height and depth, with the leather, seam construction, glue, stitch, edge finish, handles or shoulder strap, closure, pocket and feet you choose. Every seam matches and every rivet goes through both layers.
+- 3D arrangement like CLO's arrangement points: pieces start on a bag form (front, back, sides, bottom, top, a gusset wrapping the sides and bottom, a body wrapping all round, a back panel running over into a flap, handles and shoulder straps arching over), then the seams pull them together and the bag stands, slumps or hangs according to the leather.
+
 **Layout (modelled on CLO3D)**
 - Menu bar (File, Edit, Pattern, Sewing, 3D, Fabric, Help) with a Simulate switch (Space).
 - Library dock: starter patterns and piece shapes, fabric presets, hardware, objects, props.
-- 3D window and 2D pattern window side by side with their own toolbars and a resizable split.
+- 3D window and 2D pattern window side by side with their own toolbars and a resizable split. The 3D window has a light studio background, a ground grid with red and green axes, and a ViewCube like Fusion 360: click a face, edge or corner to turn the view.
 - Object browser (Pieces, Fabrics, Seams, Scene) above a property editor for whatever is selected.
 
 **Live 3D simulation**
@@ -26,7 +42,7 @@ Open-source desktop software for designing leather goods (wallets, bags, journal
 - Textured PBR rendering: procedural grain (smooth, pebbled, nubuck, canvas weave), suede flesh side, burnished cut edges, saddle-stitch thread, brass hardware, studio lighting, soft shadows and ambient occlusion.
 - Interact like CLO: drag the leather (G), pin it (I), hang weights (W), drop objects such as a phone, cards, a notebook or a bottle (O), rest it on a table edge, pedestal or hook bar.
 - Readout: load, peak stitch force against stitch strength, pull at pins against tear-out, panel stress, sag, and an estimated carrying capacity (safety factor 2) once the piece is pinned or hung. Stress map colours the leather by how close it is to its limit. Strength values are estimates until calibrated.
-- Solver: projective dynamics with isometric bending, seams as springs between matching stitch holes, contact with props, objects and itself.
+- Solver: projective dynamics with isometric bending; seams join exact points on the stitch lines (glued seams also at the cut edge, and every seam holds the angle its pieces meet at, as the flange does); points resting on the floor are held inside the solve with static friction; contact with props, objects and itself.
 
 **Fabric test (phase 2 bench)**
 - Simulates a piece under gravity in up to four materials or thicknesses side by side, in 3D: over a table edge (cantilever, ASTM D1388 style), over a round pedestal (Cusick drape), or hanging from an edge.
@@ -42,7 +58,7 @@ Open-source desktop software for designing leather goods (wallets, bags, journal
 
 ## AI control (MCP)
 
-`hidework-mcp` is a Model Context Protocol server (stdio). It finds the running app through `~/.hidework/control.json` (loopback-only port and a random token written by the app), starting Hidework if needed, and exposes 40 tools: project files, pieces, vertices, edges, folds, holes and slots, seams, straps, gussets, linings, materials and calibration, bill of materials, the live 3D simulation (simulate, pins, weights, objects, props, status), the fabric test, exports, selection, camera views and undo. Tools that change the pattern return a screenshot of the canvas (or the 3D view) automatically; pass `screenshot: false` to skip.
+`hidework-mcp` is a Model Context Protocol server (stdio). It finds the running app through `~/.hidework/control.json` (loopback-only port and a random token written by the app), starting Hidework if needed, and exposes 55 tools: project files, pieces, vertices, edges and finishes, folds, holes and slots, seams with their construction and glue, stitch types, hardware, surface work, straps, gussets, linings, laminates, corner rounding and darts, the bag builder and 3D arrangement, materials and calibration, the craft catalogue, bill of materials, the live 3D simulation (simulate, pins, weights, objects, props, status), the fabric test, exports, selection, camera views and undo. Tools that change the pattern return a screenshot of the canvas (or the 3D view) automatically; pass `screenshot: false` to skip.
 
 Register it with Claude Code:
 
@@ -52,7 +68,11 @@ claude mcp add hidework -- C:\Programs\Hidework\target\release\hidework-mcp.exe
 
 Any MCP client works the same way: run the executable over stdio. Set `HIDEWORK_APP` if `hidework.exe` is not next to `hidework-mcp.exe`.
 
-## Run it
+## Install
+
+Windows: run `Hidework_<version>_x64-setup.exe`. It installs for the current user (no administrator needed), adds Hidework to the Start menu and the desktop, opens `.hidework` files when you double-click them, and puts `hidework-mcp.exe` next to the app. Help › Connect an AI agent shows the exact command for your install. An `.msi` is also built for managed installs.
+
+## Build it
 
 Needs Rust (stable), Node 20+, and on Windows the MSVC build tools and WebView2.
 
@@ -61,7 +81,7 @@ npm install
 npm run tauri dev
 ```
 
-Build an installer with `npm run tauri build`.
+Build the installers with `npx tauri build`; they land in `target/release/bundle/nsis` and `target/release/bundle/msi`.
 
 ## Layout
 
