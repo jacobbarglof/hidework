@@ -16,7 +16,7 @@ import { alignSelected, copySelection, cutSelection, distributeSelected, mergeSe
 import { setLayout, type Layout } from "./layout";
 import type { Prop } from "./simtypes";
 import { edit, notify, piece, redo, setProject, state, uid, undo, whenComputed, type Sel } from "./store";
-import { OZ_MM } from "./units";
+import { OZ_MM, typing } from "./units";
 import type { Edge, Material, Physics, Piece, Project, Scene, StrapParams, V } from "./types";
 
 type Params = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -710,11 +710,17 @@ const handlers: Record<string, Handler> = {
   },
   /** Run a typed command exactly as in the command line, e.g. "Rectangle 80 50" or "View 3d". */
   run_command: async (p) => {
-    const words = String(p.text ?? "").trim().split(/\s+/).filter(Boolean);
+    const words = String(p.text ?? "").trim().replace(/(\d)\s+(\d+\/\d+)/g, "$1-$2").split(/\s+/).filter(Boolean);
     if (!words.length) return { commands: COMMANDS.map((c) => c.id) };
     const cmd = exactCommand(words[0]);
     if (!cmd) throw new Error(`No command called ${words[0]}. Call run_command with no text to list them.`);
-    runCommand(cmd, words.slice(1));
+    // The tools work in millimetres: plain numbers are millimetres even when the project shows inches.
+    typing.force = "mm";
+    try {
+      runCommand(cmd, words.slice(1));
+    } finally {
+      typing.force = null;
+    }
     await new Promise((r) => setTimeout(r, 150));
     return { ran: cmd.id, status: state.status };
   },

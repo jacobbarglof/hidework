@@ -15,6 +15,7 @@ import { OBJECT_PRESETS, bounds, dropObject, removeSceneItem, setProps, sim3d } 
 import type { Prop } from "./simtypes";
 import { MARKS, finishAll, loadCatalogue } from "./craftpanels";
 import { simple } from "./prefs";
+import { revealPanel } from "./docks";
 
 /** The few hardware items most projects use: shown on their own in Simple mode. */
 const COMMON_HARDWARE = ["rivet-m", "snap-20", "magnet-18", "buckle", "d-ring", "key-ring"];
@@ -73,6 +74,7 @@ function tabs<T extends string>(items: [T, string, string][], current: T, set: (
 
 /** Show a library tab, optionally opening and scrolling to one of its sections. */
 export function showLibraryTab(t: LibraryTab, sectionKey?: string): void {
+  revealPanel("library");
   ui.library = t;
   if (sectionKey) {
     collapsed.delete(sectionKey);
@@ -82,6 +84,7 @@ export function showLibraryTab(t: LibraryTab, sectionKey?: string): void {
 }
 
 export function showBrowserTab(t: BrowserTab): void {
+  revealPanel("browser");
   ui.browser = t;
   notify();
 }
@@ -113,7 +116,7 @@ function browserBody(): Node[] {
       list.append(
         h(
           "li",
-          { class: chosen.has(pc.id) ? "selected" : "", onclick: pick, title: `${pc.name} (Shift+click to select several)` },
+          { class: chosen.has(pc.id) ? "selected" : "", onclick: pick, title: `${pc.name} (Shift+click to select several; right-click for more)`, "data-piece": pc.id },
           h("span", { class: "swatch", style: `background:${m?.color ?? colorFor(m?.kind ?? "leather", m?.name ?? "")}` }),
           h("span", { class: "name" }, pc.name),
           h("span", { class: "meta" }, `×${pc.cutCount}`),
@@ -130,7 +133,7 @@ function browserBody(): Node[] {
       list.append(
         h(
           "li",
-          { class: state.sel.kind === "material" && state.sel.id === m.id ? "selected" : "", onclick: select({ kind: "material", id: m.id }), title: m.name },
+          { class: state.sel.kind === "material" && state.sel.id === m.id ? "selected" : "", onclick: select({ kind: "material", id: m.id }), title: m.name, "data-material": m.id },
           h("span", { class: "swatch", style: `background:${m.color ?? colorFor(m.kind, m.name)}` }),
           h("span", { class: "name" }, m.name),
           h("span", { class: "meta" }, `${(m.thicknessMm / OZ_MM).toFixed(1)} oz${stats ? ` · c ${stats.bendingLengthMm.toFixed(0)}` : ""}`),
@@ -146,7 +149,7 @@ function browserBody(): Node[] {
     const glue = j.glue && j.glue !== "none" ? " · glued" : "";
     const other = j.b.edges.length ? seamName(j.b) : `face of ${state.project.pieces.find((x) => x.id === j.b.pieceId)?.name ?? "?"}`;
     const sel = state.sel.kind === "join" && state.sel.id === j.id;
-    out.push(h("div", { class: `seam ${rep?.ok ? "ok" : "bad"}${sel ? " selected" : ""}`, onclick: select({ kind: "join", id: j.id }) }, h("strong", {}, `${seamName(j.a)} ↔ ${other}`), h("span", {}, `${con}${glue} · ${rep?.message ?? "…"}`)));
+    out.push(h("div", { class: `seam ${rep?.ok ? "ok" : "bad"}${sel ? " selected" : ""}`, onclick: select({ kind: "join", id: j.id }), "data-join": j.id }, h("strong", {}, `${seamName(j.a)} ↔ ${other}`), h("span", {}, `${con}${glue} · ${rep?.message ?? "…"}`)));
   }
   if (!p.joins.length) out.push(h("p", { class: "hint" }, simple() ? "No seams yet. To sew two edges together, click Show all tools, then Sew." : "Sew (S): click an edge, then the edge it sews to."));
   return out;
@@ -225,7 +228,7 @@ function patternsBody(): Node[] {
       section(
         `cat-${cat}`,
         cat,
-        ts.map((t) => h("button", { class: "tpl-item", type: "button", title: t.description, onclick: () => void newFrom(t.id) }, h("strong", {}, t.name), h("span", {}, t.description))),
+        ts.map((t) => h("button", { class: "tpl-item", type: "button", title: t.description, onclick: () => void newFrom(t.id), "data-tpl": t.id }, h("strong", {}, t.name), h("span", {}, t.description))),
         { count: ts.length, extra },
       ),
     );

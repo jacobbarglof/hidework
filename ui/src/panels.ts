@@ -5,11 +5,12 @@ import { api } from "./api";
 import { viewCenter } from "./canvas";
 import { button, check, choose, field, h, num, rerender, text } from "./dom";
 import { defaultsFor, drape, loadPresets, maxFrame, replay, runDrape, scrub } from "./drape";
-import { alignSelected, copySelection, cutSelection, deletePieces, distributeSelected, duplicateSelected, mergeSelected } from "./editing";
+import { alignSelected, copySelection, cutSelection, deletePieces, distributeSelected, duplicateSelected, mergeSelected, setUnits } from "./editing";
 import { deleteVertex, duplicatePiece, mirrorPiece, rotatePiece, toggleCurve } from "./ops";
 import { computedPiece, edit, isMulti, notify, piece, selectedPieceIds, setStatus, state, uid, version } from "./store";
 import { colorFor } from "./textures";
-import { fmtLen, fmtThickness, fromDisp, OZ_MM, round, toDisp } from "./units";
+import { fmtLen, fmtThickness, OZ_MM, parseLength } from "./units";
+import { lenBox, unitLabel } from "./lenbox";
 import { sim3d } from "./view3d";
 import { arrangeSection, bagBuilder, bomCraftSection, edgeFinishSection, finishAll, hardwareInspector, hardwareList, joinCraftSection, loadCatalogue, markInspector, marksList, projectCraftSection, stitchSection, toolingInspector } from "./craftpanels";
 import { offerUndo } from "./commandline";
@@ -64,16 +65,18 @@ export function refreshReports(): void {
     });
 }
 
+/** Mark a field with its standard value, for "Reset to default" in its right-click menu. */
+function dflt(el: HTMLInputElement, v: number | undefined): HTMLInputElement {
+  if (v !== undefined) el.dataset.default = String(v);
+  return el;
+}
+
 export function heading(title: string, extra?: Node): HTMLElement {
   return h("div", { class: "section-head" }, h("h2", {}, title), extra ?? null);
 }
 
-function len(key: string, mm: number, commit: (mm: number) => void, min?: number): HTMLInputElement {
-  const u = state.project.units;
-  return num(key, round(toDisp(mm, u), u), (v) => commit(fromDisp(v, u)), { step: u === "in" ? 0.03125 : 0.5, min });
-}
+const len = lenBox;
 
-const unitLabel = () => (state.project.units === "in" ? "in" : "mm");
 
 export const select = (sel: typeof state.sel) => () => {
   state.sel = sel;
@@ -182,7 +185,7 @@ function projectInspector(): Node[] {
     i.addEventListener("change", () => edit((x) => (x.threadColor = i.value)));
     return i;
   })());
-  const units = field("Measure in", choose("proj-units", [["mm", "Millimetres"], ["in", "Inches"]], p.units, (v) => edit((x) => (x.units = v))));
+  const units = field("Measure in", choose("proj-units", [["mm", "Millimetres"], ["in", "Inches"]], p.units, (v) => setUnits(v)));
   const waste = field("Cutting waste, %", num("waste", state.wastePct, (v) => { state.wastePct = Math.max(0, v); notify(); }, { step: 5, min: 0 }));
   if (simple()) return simpleProjectInspector(units, [thread, ...projectCraftSection(), heading("Simulation"), ...simReadout(), waste]);
   const out: Node[] = [
@@ -296,13 +299,13 @@ function materialInspector(id: string): Node[] {
       h(
         "div",
         { class: "grid2" },
-        field("Density, kg/m³", num(`ph-d-${m.id}`, ph.densityKgM3, setPh("densityKgM3"), { step: 10, min: 50 })),
-        field("Bending, MPa", num(`ph-b-${m.id}`, round2(ph.bendingModulusMpa), setPh("bendingModulusMpa"), { step: 0.5, min: 0.05 })),
-        field("Stretch, MPa", num(`ph-t-${m.id}`, ph.tensileModulusMpa, setPh("tensileModulusMpa"), { step: 5, min: 1 })),
-        field("Strength, MPa", num(`ph-u-${m.id}`, ph.tensileStrengthMpa ?? 20, setPh("tensileStrengthMpa"), { step: 1, min: 1 })),
-        field("Bend across ÷ along", num(`ph-a-${m.id}`, ph.anisotropy, setPh("anisotropy"), { step: 0.05, min: 0.05 })),
-        field("Bias stiffness", num(`ph-s-${m.id}`, ph.biasStiffness, setPh("biasStiffness"), { step: 0.05, min: 0.05, max: 1 })),
-        field("Friction", num(`ph-f-${m.id}`, ph.friction, setPh("friction"), { step: 0.05, min: 0, max: 1 })),
+        field("Density, kg/m³", dflt(num(`ph-d-${m.id}`, ph.densityKgM3, setPh("densityKgM3"), { step: 10, min: 50 }), DEFAULT_PHYSICS.densityKgM3)),
+        field("Bending, MPa", dflt(num(`ph-b-${m.id}`, round2(ph.bendingModulusMpa), setPh("bendingModulusMpa"), { step: 0.5, min: 0.05 }), DEFAULT_PHYSICS.bendingModulusMpa)),
+        field("Stretch, MPa", dflt(num(`ph-t-${m.id}`, ph.tensileModulusMpa, setPh("tensileModulusMpa"), { step: 5, min: 1 }), DEFAULT_PHYSICS.tensileModulusMpa)),
+        field("Strength, MPa", dflt(num(`ph-u-${m.id}`, ph.tensileStrengthMpa ?? 20, setPh("tensileStrengthMpa"), { step: 1, min: 1 }), DEFAULT_PHYSICS.tensileStrengthMpa)),
+        field("Bend across ÷ along", dflt(num(`ph-a-${m.id}`, ph.anisotropy, setPh("anisotropy"), { step: 0.05, min: 0.05 }), DEFAULT_PHYSICS.anisotropy)),
+        field("Bias stiffness", dflt(num(`ph-s-${m.id}`, ph.biasStiffness, setPh("biasStiffness"), { step: 0.05, min: 0.05, max: 1 }), DEFAULT_PHYSICS.biasStiffness)),
+        field("Friction", dflt(num(`ph-f-${m.id}`, ph.friction, setPh("friction"), { step: 0.05, min: 0, max: 1 }), DEFAULT_PHYSICS.friction)),
       ),
       h("p", { class: "hint" }, "Library values are starting estimates. Calibrate bending with a strip test: slide a 25 mm strip off a table until its tip touches a 41.5° line, then enter the overhang."),
       h(
@@ -340,7 +343,7 @@ function pieceInspector(id: string): Node[] {
   const cut = field(easy ? "How many to cut" : "Cut ×", num("pc-cut", pc.cutCount, (v) => set((x) => (x.cutCount = Math.max(1, Math.round(v)))), { step: 1, min: 1 }));
   const where = [
     field("Grain °", num("pc-grain", pc.grainDeg, (v) => set((x) => (x.grainDeg = v)), { step: 15 })),
-    field(`Allowance`, len("pc-sa", pc.seamAllowanceMm, (v) => set((x) => (x.seamAllowanceMm = Math.max(0, v))), 0)),
+    field(`Allowance, ${unitLabel()}`, len("pc-sa", pc.seamAllowanceMm, (v) => set((x) => (x.seamAllowanceMm = Math.max(0, v))), 0)),
     field(easy ? `Across the sheet, ${unitLabel()}` : `X, ${unitLabel()}`, len("pc-x", pc.position.x, (v) => set((x) => (x.position.x = v)))),
     field(easy ? `Down the sheet, ${unitLabel()}` : `Y, ${unitLabel()}`, len("pc-y", pc.position.y, (v) => set((x) => (x.position.y = v)))),
   ];
@@ -383,7 +386,7 @@ function pieceInspector(id: string): Node[] {
     h(
       "div",
       { class: "grid3" },
-      field(`From edge`, len("st-margin", pc.stitch.marginMm, (v) => set((x) => (x.stitch.marginMm = Math.max(0.5, v))), 0.5)),
+      field(`From edge, ${unitLabel()}`, len("st-margin", pc.stitch.marginMm, (v) => set((x) => (x.stitch.marginMm = Math.max(0.5, v))), 0.5)),
       field("Iron, mm", (() => {
         const i = num("st-pitch", pc.stitch.pitchMm, (v) => set((x) => (x.stitch.pitchMm = Math.max(1, v))), { step: 0.01, min: 1 });
         i.setAttribute("list", "pitches");
@@ -545,7 +548,8 @@ function edgeInspector(id: string, i: number): Node[] {
   if (!pc || !pc.edges[i]) return [];
   const e = pc.edges[i];
   const u = state.project.units;
-  const gussetWidth = num("gusset-w", 40, () => {}, { step: 1, min: 5 });
+  let gussetMm = 40;
+  const gussetWidth = len("gusset-w", gussetMm, (v) => (gussetMm = Math.max(5, v)), 5);
   return [
     back(id),
     heading(`Edge ${i + 1}`),
@@ -578,9 +582,9 @@ function edgeInspector(id: string, i: number): Node[] {
     h(
       "div",
       { class: "btn-row" },
-      field("Width, mm", gussetWidth),
+      field(`Width, ${unitLabel()}`, gussetWidth),
       button("Make gusset", async () => {
-        const gid = await makeGusset(id, [i], parseFloat(gussetWidth.value) || 40);
+        const gid = await makeGusset(id, [i], parseLength(gussetWidth.value, state.project.units) ?? gussetMm);
         state.sel = { kind: "piece", piece: gid };
         notify();
       }),
@@ -638,10 +642,10 @@ function holeInspector(id: string, hid: string): Node[] {
       "div",
       { class: "grid3" },
       field("Size, mm", dia),
-      field("Slot, mm", num("h-len", hole.lengthMm ?? 0, (v) => edit(() => (hole.lengthMm = Math.max(0, v))), { step: 1, min: 0 })),
+      field(`Slot, ${unitLabel()}`, len("h-len", hole.lengthMm ?? 0, (v) => edit(() => (hole.lengthMm = Math.max(0, v))), 0)),
       field("Angle °", num("h-ang", hole.angleDeg ?? 0, (v) => edit(() => (hole.angleDeg = v)), { step: 15 })),
-      field(`X`, len("h-x", hole.center.x, (x) => edit(() => (hole.center.x = x)))),
-      field(`Y`, len("h-y", hole.center.y, (y) => edit(() => (hole.center.y = y)))),
+      field(`X, ${unitLabel()}`, len("h-x", hole.center.x, (x) => edit(() => (hole.center.x = x)))),
+      field(`Y, ${unitLabel()}`, len("h-y", hole.center.y, (y) => edit(() => (hole.center.y = y)))),
     ),
     h("datalist", { id: "punch-sizes" }, ...PUNCH_SIZES.map((s) => h("option", { value: String(s) }))),
     h("div", { class: "btn-row" }, button("Delete", () => { edit(() => (pc.holes = pc.holes.filter((x) => x.id !== hid))); state.sel = { kind: "piece", piece: id }; offerUndo("The hole is deleted."); }, "danger")),
@@ -685,6 +689,8 @@ export async function addStrap(params: StrapParams, materialId?: string, at?: { 
 function strapInspector(): Node[] {
   const f = strapForm;
   const n = (key: keyof StrapParams, label: string, step = 1) => field(label, num(`strap-${key}`, Number(f[key] ?? 0), (v) => ((f as Record<string, unknown>)[key] = v), { step, min: 0 }));
+  // Lengths follow the project's units; punch and rivet hole sizes stay in millimetres, as punches are sold.
+  const l = (key: keyof StrapParams, label: string) => field(`${label}, ${unitLabel()}`, len(`strap-${key}`, Number(f[key] ?? 0), (v) => ((f as Record<string, unknown>)[key] = v), 0));
   return [
     h("a", { class: "back", href: "#", onclick: (e: Event) => { e.preventDefault(); panel.special = null; notify(); } }, "‹ Back"),
     heading("Strap or belt"),
@@ -692,17 +698,17 @@ function strapInspector(): Node[] {
     h(
       "div",
       { class: "grid2" },
-      n("lengthMm", "Length, mm", 5),
-      n("widthMm", "Width, mm"),
+      l("lengthMm", "Length"),
+      l("widthMm", "Width"),
       field("Tip", choose("strap-tip", [["round", "Round"], ["point", "Point"], ["square", "Square"]], f.tip ?? "round", (v) => (f.tip = v))),
       n("holes", "Holes"),
-      n("holeSpacingMm", "Hole spacing"),
-      n("firstHoleMm", "Tip to 1st hole"),
-      n("holeMm", "Hole size", 0.5),
+      l("holeSpacingMm", "Hole spacing"),
+      l("firstHoleMm", "Tip to 1st hole"),
+      n("holeMm", "Hole size, mm", 0.5),
       field("Buckle end", check("strap-buckle", f.buckleEnd ?? true, (v) => (f.buckleEnd = v))),
-      n("buckleFoldMm", "Buckle wrap"),
-      n("tongueSlotMm", "Tongue slot"),
-      n("rivetMm", "Rivet hole", 0.5),
+      l("buckleFoldMm", "Buckle wrap"),
+      l("tongueSlotMm", "Tongue slot"),
+      n("rivetMm", "Rivet hole, mm", 0.5),
       field("Stitch edges", check("strap-stitch", f.stitched ?? false, (v) => (f.stitched = v))),
     ),
     h("div", { class: "btn-row" }, button("Make strap", async () => { const id = await addStrap({ ...f }); panel.special = null; state.sel = { kind: "piece", piece: id }; notify(); }, "primary")),

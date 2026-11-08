@@ -3,9 +3,10 @@
 // these; the 2D canvas implements selection and snapping behind them.)
 
 import { viewCenter, viewRect } from "./canvas";
-import { deleteVertex, flattenPiece, selfIntersects, signedArea, unionRings } from "./ops";
+import { deleteVertex, flattenPiece, pointInPolygon, selfIntersects, signedArea } from "./ops";
+import { reshapeByBoolean } from "./sketch";
 import { computedPiece, edit, isMulti, notify, piece, selectPieces, selectedPieceId, selectedPieceIds, setStatus, state, uid } from "./store";
-import type { Edge, HardwarePlacement, Hole, Join, Laminate, Mark, Material, Piece, Project, V } from "./types";
+import type { Edge, HardwarePlacement, Hole, Join, Laminate, Mark, Material, Piece, Project, Units, V } from "./types";
 
 /** isMulti(): more than one piece is selected. selectPieces(ids): select exactly these pieces (first = primary). */
 export { isMulti, selectPieces } from "./store";
@@ -15,17 +16,44 @@ export { isMulti, selectPieces } from "./store";
 /** Grid snap for the 2D pattern window (moving pieces, points, holes and hardware). */
 export const snap = { on: false, gridMm: 5 };
 
+/** The grid spacing in words, in the project's units: "5 mm", "1/8 in". */
+export function gridWords(): string {
+  if (state.project?.units !== "in") return `${+snap.gridMm.toFixed(2)} mm`;
+  const inch = snap.gridMm / 25.4;
+  for (const d of [1, 2, 4, 8, 16, 32]) {
+    const n = Math.round(inch * d);
+    if (n <= 0 || Math.abs(inch * d - n) > 1e-6) continue;
+    const whole = Math.floor(n / d);
+    const rest = n % d;
+    return `${whole && rest ? `${whole} ${rest}/${d}` : rest ? `${rest}/${d}` : whole} in`;
+  }
+  return `${+inch.toFixed(3)} in`;
+}
+
 /** Turn grid snap on or off (no argument flips it). Holding Shift while dragging ignores the grid. */
 export function toggleSnap(on = !snap.on): void {
   snap.on = on;
-  setStatus(on ? `Grid snap on (${snap.gridMm} mm). Hold Alt to place freely.` : "Grid snap off.");
+  setStatus(on ? `Grid snap on (${gridWords()}). Hold Alt to place freely.` : "Grid snap off.");
 }
 
 /** Set the snap grid spacing in millimetres (at least 0.5 mm); the 2D grid redraws at that size. */
 export function setSnapGrid(mm: number): void {
   if (!Number.isFinite(mm)) return;
   snap.gridMm = Math.max(0.5, mm);
-  setStatus(`Snap grid ${snap.gridMm} mm${snap.on ? "" : " (grid snap is off)"}.`);
+  setStatus(`Snap grid ${gridWords()}${snap.on ? "" : " (grid snap is off)"}.`);
+}
+
+/**
+ * Measure in millimetres or inches. Lengths stay in millimetres inside; only what is shown and
+ * typed changes. The snap grid moves to a round size in the new units (5 mm or 1/8 in) when it
+ * is still on the other unit's usual size.
+ */
+export function setUnits(u: Units): void {
+  if (state.project.units === u) return;
+  edit((p) => (p.units = u));
+  if (u === "in" && Math.abs(snap.gridMm - 5) < 1e-9) snap.gridMm = 25.4 / 8;
+  else if (u === "mm" && Math.abs(snap.gridMm - 25.4 / 8) < 1e-9) snap.gridMm = 5;
+  setStatus(u === "in" ? "Lengths now show in inches. Type 3/8 or 4 1/2 for fractions; 25mm still works." : "Lengths now show in millimetres. 2in still works when you type it.");
 }
 
 /** Round a design-space value to the snap grid when snap is on. */
@@ -487,16 +515,6 @@ function dropStraightCorner(pc: Piece, k: number): ((e: number) => number) | nul
   return (e) => (e < k ? e : e === k ? k - 1 : e - 1);
 }
 
-/** A straight edge that keeps another edge's stitching and finish settings. */
-function asLine(e: Edge): Edge {
-  const out: Edge = { type: "line", stitched: e.stitched };
-  if (e.skiveMm !== undefined) out.skiveMm = e.skiveMm;
-  if (e.finish !== undefined) out.finish = e.finish;
-  if (e.turnMm !== undefined) out.turnMm = e.turnMm;
-  if (e.crease !== undefined) out.crease = e.crease;
-  return out;
-}
-
 /** Point B's seam ends at A through `mapB` and A's through `mapA`; drop ends that vanish, seams left empty, and B. */
 function remapRefs(p: Project, a: string, b: string, mapA: (e: number) => number[], mapB: (e: number) => number[]): void {
   for (const j of p.joins) {
@@ -648,26 +666,57 @@ function mergeByUnion(p: Project, aId: string, bId: string): string[] | string {
   const A = p.pieces.find((x) => x.id === aId);
   const B = p.pieces.find((x) => x.id === bId);
   if (!A || !B || A.vertices.length < 3 || B.vertices.length < 3) return APART;
-  const ra = flattenPiece(A, A.position);
-  const rb = flattenPiece(B, B.position);
-  const box = (pts: V[]) => ({ x0: Math.min(...pts.map((q) => q.x)), x1: Math.max(...pts.map((q) => q.x)), y0: Math.min(...pts.map((q) => q.y)), y1: Math.max(...pts.map((q) => q.y)) });
-  const ba = box(ra.pts);
-  const bb = box(rb.pts);
-  const tol = 0.05;
-  if (ba.x1 < bb.x0 - tol || bb.x1 < ba.x0 - tol || ba.y1 < bb.y0 - tol || bb.y1 < ba.y0 - tol) return APART;
-  const res = unionRings(ra, rb, tol);
-  if ("error" in res) return res.error === "The outlines do not overlap or touch." ? APART : res.error;
-  const curved = [...A.edges, ...B.edges].some((e) => e.type === "cubic");
-  const maps: Map<number, number[]>[] = [new Map(), new Map()];
-  res.srcs.forEach((list, k) => list.forEach(([ring, e]) => maps[ring].set(e, [...(maps[ring].get(e) ?? []), k])));
-  A.edges = res.srcs.map((list) => asLine((list[0][0] === 0 ? A : B).edges[list[0][1]]));
-  A.vertices = res.pts.map((q) => sub(q, A.position));
+  if (!boxesMeet(A, B, 0.05)) return APART;
+  const res = reshapeByBoolean(A, B, "union", false, 0.05);
+  if (typeof res === "string") return res === "The outlines do not overlap or touch." ? APART : res;
   const d = sub(B.position, A.position);
   const fold = carryFeatures(A, B, (q) => add(q, d), 0, 1);
-  remapRefs(p, A.id, B.id, (e) => maps[0].get(e) ?? [], (e) => maps[1].get(e) ?? []);
+  remapRefs(p, A.id, B.id, (e) => res.mapA.get(e) ?? [], (e) => res.mapB.get(e) ?? []);
   const notes: string[] = [];
-  if (curved) notes.push("Curves became short straight edges.");
+  if (res.curvesLost) notes.push("Curves became short straight edges.");
   if (res.holesFilled) notes.push("The gap the pieces enclosed was filled in.");
   if (fold) notes.push(fold);
+  return notes;
+}
+
+/** Do the two pieces' outlines (with their positions) come within `tol` of each other's boxes? */
+function boxesMeet(A: Piece, B: Piece, tol: number): boolean {
+  const box = (pc: Piece) => {
+    const pts = flattenPiece(pc, pc.position).pts;
+    return { x0: Math.min(...pts.map((q) => q.x)), x1: Math.max(...pts.map((q) => q.x)), y0: Math.min(...pts.map((q) => q.y)), y1: Math.max(...pts.map((q) => q.y)) };
+  };
+  const ba = box(A);
+  const bb = box(B);
+  return !(ba.x1 < bb.x0 - tol || bb.x1 < ba.x0 - tol || ba.y1 < bb.y0 - tol || bb.y1 < ba.y0 - tol);
+}
+
+/** combineShape: the shape does not reach the piece. */
+export const SHAPE_APART = APART;
+/** combineShape: the shape changes nothing (it lies inside the piece, or outside it for a cut). */
+export const SHAPE_NO_CHANGE = "no change";
+
+/**
+ * Sketch-style editing: grow piece `targetId` of `p` by `shape` ("union") or cut `shape` out of it
+ * ("cut"), as one outline. `shape` is not in the project; it is placed by its own position, in the
+ * target's design coordinates. New edges carry on the stitching of the edge they grow out of, and
+ * seams on the target follow its edges. Returns notes for the status line, SHAPE_APART,
+ * SHAPE_NO_CHANGE, or an error in words.
+ */
+export function combineShape(p: Project, targetId: string, shape: Piece, op: "union" | "cut"): string[] | string {
+  const A = p.pieces.find((x) => x.id === targetId);
+  if (!A || A.vertices.length < 3 || shape.vertices.length < 3) return APART;
+  if (!boxesMeet(A, shape, 0.05)) return APART;
+  const res = reshapeByBoolean(A, shape, op, true, 0.05);
+  if (typeof res === "string") return res === "The outlines do not overlap or touch." ? APART : res;
+  if (Math.abs(res.after - res.before) < 0.01) return SHAPE_NO_CHANGE;
+  remapRefs(p, A.id, shape.id, (e) => res.mapA.get(e) ?? [], () => []);
+  const notes: string[] = [];
+  if (res.holesFilled) notes.push("The gap it enclosed was filled in.");
+  if (op === "cut") {
+    // Holes and hardware the cut took away with it.
+    const ring = flattenPiece(A).pts;
+    const out = A.holes.filter((h) => !pointInPolygon(h.center, ring)).length + (A.hardware ?? []).filter((h) => !pointInPolygon(h.at, ring)).length;
+    if (out) notes.push(`${out} ${out === 1 ? "hole or fitting" : "holes or fittings"} now ${out === 1 ? "sits" : "sit"} outside the piece: move or delete ${out === 1 ? "it" : "them"}.`);
+  }
   return notes;
 }

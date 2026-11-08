@@ -362,6 +362,11 @@ pub fn print_paths(s: &ToolingStroke) -> Vec<(Vec<Vec2>, bool)> {
         StrokeKind::Fill => out.push((flatten(s), true)),
         _ => {}
     }
+    // A beveler walked along a cut is not printed: the cut lines are what gets traced onto the
+    // leather, and a mark per strike buried a carving's lines (the 3D view shows the bevel).
+    if s.kind == StrokeKind::Line && s.tool == ToolKind::Beveler {
+        return out;
+    }
     let shape = face(s.tool, s.size());
     for imp in impressions(s) {
         let a = imp.angle_deg.to_radians();

@@ -1454,7 +1454,7 @@ table.report {
   white-space: nowrap;
 }
 
-.dock.left .tabs button {
+#panel-library .tabs button {
   font-size: 10px;
   letter-spacing: 0.05em;
   padding: 7px 1px 5px;
@@ -2388,4 +2388,19 @@ table.report {
 :root[data-theme="contrast"] .tip-type b,
 :root[data-theme="contrast"] .tip-off {
   color: var(--gold);
+}
+
+/* Close button on a window's title strip. */
+.win-close {
+  margin-left: 4px;
+  min-width: 28px;
+  justify-content: center;
+}
+.win-close .win-x {
+  font-size: 20px;
+  line-height: 1;
+}
+.win-close:hover {
+  color: #f0d9b5;
+  background: rgba(176, 60, 46, 0.55);
 }

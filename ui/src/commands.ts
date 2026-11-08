@@ -3,13 +3,15 @@
 // it, so a command's name, icon, shortcut and help are written once.
 
 import { addRect, addRegularPolygon, cancelAll, exportFile, fabDialog, mirrorSelected, newFromName, openFile, parseLen, print, rotateSelected, saveFile, setTool, setTool3d, showMcp, showTemplates, startShape, toggleSim, type ExportKind } from "./actions";
+import { LEVELS, machine, quality, qualityPref, setQualityPref, type QualityPref } from "./quality";
 import { applyProp, showBrowserTab, showLibraryTab, type PropKind } from "./browser";
 import { fitView, viewCenter, zoomBy } from "./canvas";
-import { alignSelected, copySelection, cutSelection, deleteSelected, distributeSelected, duplicateSelected, mergeSelected, nudgeSelected, pasteClipboard, selectAll, selectedPieces, setSnapGrid, snap, toggleSnap, type AlignTo } from "./editing";
+import { alignSelected, copySelection, cutSelection, deleteSelected, distributeSelected, duplicateSelected, gridWords, mergeSelected, nudgeSelected, pasteClipboard, selectAll, selectedPieces, setSnapGrid, setUnits, snap, toggleSnap, type AlignTo } from "./editing";
 import { showGuide, showSettings, showShortcuts } from "./help";
 import { openChecker } from "./checker";
 import { SCALE_MAX, SCALE_MIN, prefs, setMode, setScale, setTheme, type Theme } from "./prefs";
 import { ensureVisible, hovered, layout, setLayout, visible, type Layout } from "./layout";
+import { allCollapsed, panelCommand, panelOpen, panelsMerged, panelsOnTop, resetPanels, toggleCollapseAll, toggleMerged, togglePanelsTop } from "./docks";
 import { insertVertex, roundedRectPiece, toggleCurve } from "./ops";
 import { addStrap, openFabricTest, panel } from "./panels";
 import { offerUndo } from "./commandline";
@@ -21,7 +23,9 @@ import { DESIGNS, openTooling, startTooling, tooling } from "./tooling";
 import { openHideLayout } from "./hide";
 import { openImport } from "./importer";
 import { addDartAt, edgeMiddle, ovalPiece, roundCornerAt, setEdgeAngle, setEdgeLength, slotPiece } from "./shapeops";
-import { draw } from "./drawtools";
+import { draw, setCombine } from "./drawtools";
+import { roundGussetCommand } from "./roundgusset";
+import { fmtLen, round, toDisp } from "./units";
 import { focusEdgeLength } from "./edgebox";
 import { setSmartSnap, smart } from "./smartsnap";
 import { changed, edit, notify, piece, placing, redo, setStatus, state, undo, version } from "./store";
@@ -101,6 +105,9 @@ const tool3d = (t: typeof sim3d.tool) => () => sim3d.tool === t;
 const shapeOn = (s: typeof draw.shape) => () => (state.tool === "rect" || state.tool === "polygon") && draw.shape === s;
 
 /** A shape of a given size, typed on the command line, in the middle of the view. */
+/** A length for the status line, in the project's units. */
+const L = (mm: number): string => fmtLen(mm, state.project.units).replace(/\.?0+ (mm|in)$/, " $1");
+
 function addShapeAt(make: (at: { x: number; y: number }) => import("./types").Piece, w: number, hh: number, what: string): void {
   ensureVisible("2d");
   const c = viewCenter();
@@ -185,7 +192,7 @@ export const COMMANDS: Command[] = [
       const pc = roundedRectPiece({ x: Math.round(c.x - w / 2), y: Math.round(c.y - hh / 2) }, w, hh, Math.min(r, w / 2, hh / 2), "Rounded panel");
       edit((p) => p.pieces.push(pc));
       state.sel = { kind: "piece", piece: pc.id };
-      setStatus(`Rounded panel ${w} × ${hh} mm added.`);
+      setStatus(`Rounded panel ${L(w)} × ${L(hh)} added.`);
     },
     active: shapeOn("roundrect"),
   },
@@ -193,13 +200,13 @@ export const COMMANDS: Command[] = [
     id: "circle", name: "Circle", aliases: ["c", "disc", "disk"], icon: "circle", keys: ["C"], tab: "pattern", group: "Create", args: "[across]",
     simpleLabel: "Circle",
     help: "Click the middle, then move out and click. Or type how wide it is across and press Enter. Circle 60 adds one straight away.",
-    run: (a) => { const d = parseLen(a[0]); if (d) addShapeAt((at) => ovalPiece(at, d, d, "Circle"), d, d, `Circle ${d} mm across`); else startShape("circle"); },
+    run: (a) => { const d = parseLen(a[0]); if (d) addShapeAt((at) => ovalPiece(at, d, d, "Circle"), d, d, `Circle ${L(d)} across`); else startShape("circle"); },
     active: shapeOn("circle"),
   },
   {
     id: "oval", name: "Oval", aliases: ["ellipse", "ell"], icon: "ellipse", keys: ["Shift+E"], tab: "pattern", group: "Create", ribbon: "small", args: "[width height]",
     help: "Click two corners of the box the oval fills (or drag). Type the width, Enter, then the height. Oval 90 60 adds one straight away.",
-    run: (a) => { const w = parseLen(a[0]); const hh = parseLen(a[1] ?? a[0]); if (w && hh) addShapeAt((at) => ovalPiece(at, w, hh, "Oval"), w, hh, `Oval ${w} × ${hh} mm`); else startShape("oval"); },
+    run: (a) => { const w = parseLen(a[0]); const hh = parseLen(a[1] ?? a[0]); if (w && hh) addShapeAt((at) => ovalPiece(at, w, hh, "Oval"), w, hh, `Oval ${L(w)} × ${L(hh)}`); else startShape("oval"); },
     active: shapeOn("oval"),
   },
   {
@@ -211,7 +218,7 @@ export const COMMANDS: Command[] = [
   {
     id: "slotshape", name: "Slot shape", short: "Slot", word: "SlotShape", aliases: ["stadium", "pill", "keeper", "loop"], icon: "slot", keys: ["Shift+U"], tab: "pattern", group: "Create", ribbon: "small", args: "[length width]",
     help: "A long piece with both ends fully round, such as a keeper or a belt loop. Click two corners, or type the length and width. SlotShape 60 15 adds one straight away.",
-    run: (a) => { const w = parseLen(a[0]); const hh = parseLen(a[1]); if (w && hh) addShapeAt((at) => slotPiece(at, w, hh, "both", "Slot"), w, hh, `Slot ${w} × ${hh} mm`); else startShape("slot"); },
+    run: (a) => { const w = parseLen(a[0]); const hh = parseLen(a[1]); if (w && hh) addShapeAt((at) => slotPiece(at, w, hh, "both", "Slot"), w, hh, `Slot ${L(w)} × ${L(hh)}`); else startShape("slot"); },
     active: shapeOn("slot"),
   },
   {
@@ -223,7 +230,7 @@ export const COMMANDS: Command[] = [
       const nums = a.filter((x) => !words.includes(x));
       const w = parseLen(nums[0]);
       const hh = parseLen(nums[1]);
-      if (w && hh) return addShapeAt((at) => slotPiece(at, w, hh, draw.ends, "Strap end"), w, hh, `Strap end ${w} × ${hh} mm`);
+      if (w && hh) return addShapeAt((at) => slotPiece(at, w, hh, draw.ends, "Strap end"), w, hh, `Strap end ${L(w)} × ${L(hh)}`);
       startShape("strapend");
       setStatus(`Strap end (${draw.ends === "point" ? "pointed" : "round"}): click two corners, or type the length and width. Type StrapEnd ${draw.ends === "point" ? "round" : "point"} for the other kind.`);
     },
@@ -327,6 +334,24 @@ export const COMMANDS: Command[] = [
     run: (a) => { const s = needSelection("edge", "Dart"); if (s) void addDartAt(s.piece, s.index, parseLen(a[0]) ?? 20, parseLen(a[1]) ?? 40); },
     enabled: () => state.sel.kind === "edge",
   },
+  {
+    id: "addtopiece", name: "Add to a piece", short: "Add to piece", simpleLabel: "Add to a piece", word: "AddToPiece", aliases: ["extend", "addshape", "grow", "tab"], icon: "merge", tab: "pattern", group: "Create", ribbon: "small",
+    help: "Grow a piece, as in a sketch: click its edge, click the new outline, and click back on its edge; the tab joins the piece as one outline. Any shape tool can add too: press Tab while drawing.",
+    run: () => { startShape("pen"); setCombine("add"); },
+    active: () => state.tool === "polygon" && draw.combine === "add",
+  },
+  {
+    id: "cutfrompiece", name: "Cut from a piece", short: "Cut from piece", simpleLabel: "Cut from a piece", word: "CutFromPiece", aliases: ["notch", "subtract", "cutshape"], icon: "cut", tab: "pattern", group: "Create", ribbon: "small",
+    help: "Cut a notch or a curve out of a piece: start on its edge, click the shape of the cut inside it, and finish back on its edge. Or draw any shape over the piece with Cut from piece chosen in the drawing card.",
+    run: () => { startShape("pen"); setCombine("cut"); },
+    active: () => state.tool === "polygon" && draw.combine === "cut",
+  },
+  {
+    id: "roundgusset", name: "Round piece with a side wall", short: "Round + wall", simpleLabel: "Round piece with a side wall", word: "RoundGusset", aliases: ["roundwall", "cylinder", "drum", "circlegusset", "roundpouch", "dpouch"], icon: "circle", tab: "pattern", group: "Create", ribbon: "small", args: "[circle|oval|d|selected] [across [down]] [wall] [all|part] [one|two]",
+    help: "A round end (circle, oval or D shape, or the round piece you selected) with a side wall that wraps round it, for a drum bag, a round pouch, a pen cup or a D-shaped pouch. The wall's stitch line matches the end's exactly. RoundGusset circle 90 50 makes a 90 across, 50 tall closed cylinder.",
+    // With nothing typed, the dialog asks for the sizes.
+    run: (a) => (a.length ? roundGussetCommand(a, (x) => parseLen(x)) : import("./tooldialog").then((m) => m.invoke(command("roundgusset")))),
+  },
   { id: "merge", name: "Merge pieces", short: "Merge", word: "Merge", aliases: ["union", "combine"], icon: "merge", keys: ["Ctrl+J"], tab: "pattern", group: "Modify", help: "Merge the selected pieces into one: along the seam between them, or as a union where they overlap or touch.", run: () => mergeSelected(), enabled: many(2) },
   { id: "flip", name: "Flip piece", short: "Flip", word: "Flip", icon: "flip", keys: ["Shift+Y"], tab: "pattern", group: "Modify", ribbon: "none", help: "Flip the selected pieces top to bottom.", run: () => mirrorSelected("y"), enabled: hasPiece },
   { id: "delete", name: "Delete", aliases: ["del", "erase", "remove"], icon: "delete", keys: ["Del", "Backspace"], tab: "pattern", group: "Modify", ribbon: "none", repeat: false, help: "Delete the selection: a piece, point, hole, fold, seam, hardware or mark.", run: () => deleteSelected(), enabled: () => state.sel.kind !== "none" && state.sel.kind !== "material" },
@@ -372,10 +397,17 @@ export const COMMANDS: Command[] = [
   { id: "check", name: "Check my pattern", short: "Check", simpleLabel: "Check my pattern", word: "Check", aliases: ["checker", "validate", "problems"], icon: "check", tab: "pattern", group: "Inspect", help: "Look the pattern over for problems before you cut leather, such as seams whose lengths do not match.", run: () => openChecker() },
   { id: "snap", name: "Grid snap", short: "Snap", word: "Snap", aliases: ["gridsnap"], icon: "snap", keys: ["F9"], tab: "view", group: "Grid", args: "[on|off]", help: "Snap moved pieces, points, holes and hardware to the grid.", run: (a) => toggleSnap(a[0] ? /^(on|1|yes)$/i.test(a[0]) : !snap.on), active: () => snap.on },
   {
-    id: "grid", name: "Grid size", word: "Grid", aliases: ["gridsize"], icon: "grid", tab: "view", group: "Grid", ribbon: "field", args: "mm",
-    help: "Grid snap spacing in mm. Grid 5 turns snap on at 5 mm.",
-    field: { kind: "number", get: () => snap.gridMm, set: (v) => { const n = parseFloat(v); if (Number.isFinite(n) && n > 0) { setSnapGrid(n); notify(); } }, unit: "mm", min: 0.5, step: 0.5 },
-    run: (a) => { const n = parseLen(a[0]); if (!n) return setStatus(`Grid is ${snap.gridMm} mm. Type Grid 5 to change it.`); setSnapGrid(n); toggleSnap(true); },
+    id: "grid", name: "Grid size", word: "Grid", aliases: ["gridsize"], icon: "grid", tab: "view", group: "Grid", ribbon: "field", args: "size",
+    help: "Grid snap spacing, in the project's units. Grid 5 turns snap on at 5 mm; in inches, Grid 1/8 snaps to an eighth of an inch.",
+    field: {
+      kind: "number",
+      get: () => round(toDisp(snap.gridMm, state.project?.units ?? "mm"), state.project?.units ?? "mm"),
+      set: (v) => { const n = parseLen(v); if (n && n > 0) { setSnapGrid(n); notify(); } },
+      get unit() { return state.project?.units === "in" ? "in" : "mm"; },
+      get min() { return state.project?.units === "in" ? 1 / 32 : 0.5; },
+      get step() { return state.project?.units === "in" ? 1 / 32 : 0.5; },
+    },
+    run: (a) => { const n = parseLen(a[0]); if (!n) return setStatus(`Grid is ${gridWords()}. Type Grid and a size to change it.`); setSnapGrid(n); toggleSnap(true); },
   },
   {
     id: "smartsnap", name: "Smart snap", short: "Smart snap", simpleLabel: "Snapping", word: "SmartSnap", aliases: ["osnap", "objectsnap", "snapping", "guides"], icon: "snapobjects", keys: ["F10"], tab: "view", group: "Grid", args: "[on|off]",
@@ -513,6 +545,13 @@ export const COMMANDS: Command[] = [
     help: "View 3d, View pattern, View both; or a 3D direction: View top.",
     run: (a) => { const v = (a[0] ?? "").toLowerCase(); if (setLayoutArg(v)) return; if ((VIEWS as readonly string[]).includes(v)) return preset(v as (typeof VIEWS)[number]); setStatus("View 3d, pattern or both; or front, side, top, back, home."); },
   },
+  // Panels (docks.ts): the Library and the Browser, docked, merged, at the top or floating.
+  { id: "librarypanel", name: "Library panel", short: "Library", word: "Library", aliases: ["librarypanel", "lib"], icon: "panelleft", tab: "view", group: "Panels", args: "[left|right|top|float|close]", help: "Show or close the Library (patterns, fabrics, hardware, scene). Library top docks it at the top.", run: (a) => panelCommand("library", a[0]), active: () => panelOpen("library") },
+  { id: "browserpanel", name: "Browser panel", short: "Browser", word: "Browser", aliases: ["browserpanel", "properties", "inspector"], icon: "panelright", tab: "view", group: "Panels", args: "[left|right|top|float|close]", help: "Show or close the Browser (pieces, fabrics, seams and the properties of what is selected).", run: (a) => panelCommand("browser", a[0]), active: () => panelOpen("browser") },
+  { id: "mergepanels", name: "Merge panels", short: "Merge", word: "MergePanels", aliases: ["onepanel", "combinepanels"], icon: "panelmerge", tab: "view", group: "Panels", help: "Put the Library and the Browser in one dock, one above the other. Run it again to split them.", run: () => toggleMerged(), active: () => panelsMerged() },
+  { id: "panelstop", name: "Panels on top", short: "On top", word: "PanelsTop", aliases: ["toppanels", "panelstrip"], icon: "paneltop", tab: "view", group: "Panels", help: "Put both panels in a strip above the windows, so the 3D and pattern windows get the full width. Run it again to put them back at the sides.", run: () => togglePanelsTop(), active: () => panelsOnTop() },
+  { id: "collapsepanels", name: "Collapse panels", short: "Collapse", word: "CollapsePanels", aliases: ["maxcanvas", "hidepanels", "togglepanels"], icon: "panelcollapse", keys: ["F6"], tab: "view", group: "Panels", repeat: false, help: "Fold every panel to a thin strip for the most room, or open them again.", run: () => toggleCollapseAll(), active: () => allCollapsed() },
+  { id: "resetpanels", name: "Reset panel layout", short: "Reset panels", word: "ResetPanels", aliases: ["defaultpanels"], icon: "reset", tab: "view", group: "Panels", repeat: false, help: "Library on the left as a strip, Browser open on the right, standard sizes.", run: () => resetPanels() },
   { id: "fit", name: "Fit", aliases: ["zoomextents", "ze", "extents"], icon: "fit", keys: ["0", "Home"], tab: "view", group: "Navigate", help: "Fit everything in both windows.", run: () => { fitView(); frameView(); } },
   { id: "home", name: "Home view", short: "Home", word: "Home", aliases: ["iso"], icon: "home", keys: ["Shift+Home"], tab: "view", group: "Navigate", help: "Turn the 3D view to the home (three-quarter) angle.", run: () => preset("home") },
   { id: "zoomin", name: "Zoom in", word: "ZoomIn", icon: "zoomin", keys: ["=", "+"], tab: "view", group: "Navigate", ribbon: "small", help: "Zoom in on the window under the mouse.", run: () => zoom(1.25) },
@@ -526,8 +565,8 @@ export const COMMANDS: Command[] = [
   {
     id: "units", name: "Units", aliases: ["unit"], icon: "units", tab: "view", group: "Units", ribbon: "field", args: "mm|in",
     help: "Show lengths in millimetres or inches.",
-    field: { kind: "select", get: () => state.project.units, set: (v) => edit((p) => (p.units = v as Units)), options: [["mm", "Millimetres"], ["in", "Inches"]] },
-    run: (a) => { const v = (a[0] ?? "").toLowerCase(); const u: Units = v.startsWith("i") ? "in" : v.startsWith("m") ? "mm" : state.project.units === "mm" ? "in" : "mm"; edit((p) => (p.units = u)); setStatus(`Units: ${u === "in" ? "inches" : "millimetres"}.`); },
+    field: { kind: "select", get: () => state.project.units, set: (v) => setUnits(v as Units), options: [["mm", "Millimetres"], ["in", "Inches"]] },
+    run: (a) => { const v = (a[0] ?? "").toLowerCase(); const u: Units = v.startsWith("i") ? "in" : v.startsWith("m") ? "mm" : state.project.units === "mm" ? "in" : "mm"; setUnits(u); },
   },
 
   { id: "tools", name: "Show all tools", word: "Tools", aliases: ["alltools", "simple", "ribbon"], icon: "tools", tab: "view", group: "Display", help: "Switch between the short row of big buttons (Simple) and every tool in the ribbon.", run: (a) => { const v = (a[0] ?? "").toLowerCase(); setMode(v === "simple" ? "simple" : v === "all" || v === "full" ? "full" : prefs.mode === "simple" ? "full" : "simple"); }, active: () => prefs.mode === "full" },
@@ -538,6 +577,26 @@ export const COMMANDS: Command[] = [
     help: "Size of all text and buttons, 85% to 200%. Ctrl+0 goes back to the usual size (100%).",
     field: { kind: "select", get: () => String(Math.round(prefs.scale * 100)), set: (v) => setScale(parseInt(v, 10) / 100), options: [85, 100, 115, 125, 150, 175, 200].map((n) => [String(n), `${n}%`] as [string, string]) },
     run: (a) => { const n = num(a[0]); setScale(n ? n / 100 : 1); },
+  },
+  {
+    id: "quality", name: "Simulation quality", word: "Quality", aliases: ["simquality", "performance", "detail"], icon: "simulate", tab: "view", group: "Display", ribbon: "field", args: "auto|fast|balanced|detailed",
+    help: "How much detail the 3D model and view use. Auto fits this computer and steps down by itself if the 3D runs slowly. Fast suits older or low-power computers; Detailed needs a strong one.",
+    field: {
+      kind: "select",
+      get: () => qualityPref(),
+      set: (v) => setQualityPref(v as QualityPref),
+      options: [["auto", `Auto (${quality().name})`], ...LEVELS.map((l) => [l.id, l.name] as [string, string])],
+    },
+    run: (a) => {
+      const v = (a[0] ?? "").toLowerCase();
+      if (v === "auto" || LEVELS.some((l) => l.id === v)) {
+        setQualityPref(v as QualityPref);
+        setStatus(`Simulation quality: ${v === "auto" ? `Auto (${quality().name})` : quality().name}.`);
+      } else {
+        const m = machine();
+        setStatus(`Simulation quality is ${qualityPref() === "auto" ? `Auto (${quality().name})` : quality().name}. This computer: ${m.threads} threads${m.memoryGb ? `, about ${m.memoryGb} GB memory` : ""}${m.gpu ? `, ${m.gpu}` : ""}. Type Quality auto, fast, balanced or detailed.`);
+      }
+    },
   },
   {
     id: "theme", name: "Colours", word: "Theme", aliases: ["colours", "colors", "contrast"], icon: "theme", tab: "view", group: "Display", ribbon: "field", args: "leather|light|contrast",

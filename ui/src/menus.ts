@@ -49,6 +49,8 @@ export interface MenuOptions {
   bar?: { buttons: HTMLElement[]; open(b: HTMLElement): void };
   /** Called once the menu closes. */
   onClose?(): void;
+  /** Big rows (right-click menus in Simple mode). */
+  big?: boolean;
 }
 
 interface Level {
@@ -132,6 +134,7 @@ export function openMenu(anchor: HTMLElement | null, items: MenuItem[], opts: Me
   options = opts;
   anchor?.classList.add("menu-open");
   const lv = buildLevel(items, 0);
+  if (opts.big) lv.el.classList.add("big");
   if (opts.at) place(lv.el, { left: opts.at.x, right: opts.at.x, top: opts.at.y, bottom: opts.at.y }, "below");
   else if (anchor) place(lv.el, anchor.getBoundingClientRect(), opts.above ? "above" : "below");
 }
@@ -253,6 +256,7 @@ function openSub(lv: Level, i: number): void {
   const it = lv.items[i] as Entry;
   if (!it.sub || !enabled(it)) return;
   const sub = buildLevel(it.sub(), d + 1);
+  if (options.big) sub.el.classList.add("big");
   place(sub.el, lv.rows[i]!.getBoundingClientRect(), "right");
 }
 

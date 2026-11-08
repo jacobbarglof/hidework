@@ -128,7 +128,8 @@ function choose(c: Command): void {
 }
 
 function execute(text: string): void {
-  const parts = text.trim().split(/\s+/).filter(Boolean);
+  // "3 1/2" is one length: keep a whole number and the fraction after it together.
+  const parts = text.trim().replace(/(\d)\s+(\d+\/\d+)/g, "$1-$2").split(/\s+/).filter(Boolean);
   const w = parts.shift();
   if (!w) return closeLine();
   const c = exactCommand(w) ?? (matches.length && firstWord() === w ? matches[pick] : undefined) ?? matchCommands(w, 1)[0];

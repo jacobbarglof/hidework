@@ -43,6 +43,8 @@ interface Spec {
   live?(key: string, value: string): void;
   /** Tool: how to put it down. */
   done?: string;
+  /** Form: also opens in Simple mode (where other forms run straight away). */
+  simple?: boolean;
 }
 
 const PUNCH_SIZES = [1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 6, 8, 10];
@@ -76,6 +78,22 @@ const SPECS: Record<string, Spec> = {
   align: { kind: "form", win: "2d", needs: needPieces(2), inputs: () => [{ key: "to", label: "Line up", kind: "select", value: "left", options: [["left", "Left edges"], ["centre", "Centres across"], ["right", "Right edges"], ["top", "Top edges"], ["middle", "Middles down"], ["bottom", "Bottom edges"]] }] },
   distribute: { kind: "form", win: "2d", needs: needPieces(3), inputs: () => [{ key: "dir", label: "Space", kind: "select", value: "x", options: [["x", "Across"], ["y", "Down"]] }] },
   roundrect: { kind: "form", win: "2d", inputs: () => [{ key: "w", label: "Width", kind: "len", value: 80 }, { key: "h", label: "Height", kind: "len", value: 50 }, { key: "r", label: "Corners", kind: "len", value: 6 }] },
+  roundgusset: {
+    kind: "form", win: "2d", simple: true,
+    needs: () => ({ text: selectedPieces().length === 1 ? `${pieceName(selectedPieces()[0])} selected (choose The selected piece to use it)` : "Nothing needed: a new round end is drawn", ok: true }),
+    inputs: () => [
+      { key: "shape", label: "End shape", kind: "select", value: selectedPieces().length === 1 ? "selected" : "circle", options: [["circle", "Circle"], ["oval", "Oval"], ["d", "D shape (flat top)"], ["selected", "The selected piece"]] },
+      { key: "w", label: "Across", kind: "len", value: 90 },
+      { key: "h", label: "Down (oval, D)", kind: "len", value: 60 },
+      { key: "wall", label: "Wall height", kind: "len", value: 50 },
+      { key: "wrap", label: "Wall goes", kind: "select", value: "all", options: [["all", "All the way round"], ["part", "Round the curve only"]] },
+      { key: "ends", label: "Ends", kind: "select", value: "two", options: [["two", "Two (closed)"], ["one", "One (a cup or bucket)"]] },
+    ],
+    args: (v) => {
+      const lenArgs = v.shape === "selected" ? [v.wall] : v.shape === "circle" ? [v.w, v.wall] : [v.w, v.h, v.wall];
+      return [v.shape, ...lenArgs.map((x) => (/^[\d.\s/-]+$/.test(x.trim()) ? x.trim().replace(/\s+/g, "-") : x)), v.wrap, v.ends];
+    },
+  },
   punch: {
     kind: "tool", win: "2d", done: "select",
     needs: () => ({ text: "Click inside a piece to punch", ok: true }),
@@ -116,7 +134,7 @@ const byId = () => new Map(COMMANDS.map((c) => [c.id, c]));
 /** Run a command picked in the chrome: forms open their dialog (full tools), others run. */
 export function invoke(c: Command): void {
   const spec = SPECS[c.id];
-  if (spec?.kind === "form" && prefs.mode === "full") open(c, spec);
+  if (spec?.kind === "form" && (prefs.mode === "full" || spec.simple)) open(c, spec);
   else runCommand(c);
 }
 
@@ -126,9 +144,10 @@ export function closeDialog(): void {
 }
 
 function startValue(c: Command, i: Input): string {
-  const saved = memo.get(c.id)?.[i.key];
+  const saved = memo.get(`${c.id}|${units()}`)?.[i.key];
   if (saved !== undefined) return saved;
-  if (i.kind === "len") return String(round(toDisp(i.value as number, units()), units()));
+  // Inches open on a round quarter inch rather than a converted millimetre default (3.543).
+  if (i.kind === "len") return units() === "in" ? String(Math.round(((i.value as number) / 25.4) * 4) / 4) : String(round(toDisp(i.value as number, units()), units()));
   return String(i.value);
 }
 
@@ -144,11 +163,14 @@ function open(c: Command, spec: Spec): void {
       for (const [v, t] of i.options ?? []) s.append(h("option", { value: v, selected: v === values[i.key] }, t));
       ctl = s;
     } else {
-      ctl = h("input", { class: "td-input", type: "number", value: values[i.key], step: String(i.step ?? (i.kind === "len" && units() === "in" ? 0.0625 : 0.5)), min: i.min !== undefined ? String(i.min) : undefined, "data-key": `td-${i.key}` }) as HTMLInputElement;
+      // Lengths are text so inches can be typed as fractions (3/8, 4 1/2); 25mm works too.
+      ctl = i.kind === "len"
+        ? (h("input", { class: "td-input", type: "text", inputMode: "decimal", autocomplete: "off", value: values[i.key], "data-key": `td-${i.key}` }) as HTMLInputElement)
+        : (h("input", { class: "td-input", type: "number", value: values[i.key], step: String(i.step ?? 0.5), min: i.min !== undefined ? String(i.min) : undefined, "data-key": `td-${i.key}` }) as HTMLInputElement);
     }
     const commit = () => {
       values[i.key] = ctl.value;
-      memo.set(c.id, { ...(memo.get(c.id) ?? {}), [i.key]: ctl.value });
+      memo.set(`${c.id}|${units()}`, { ...(memo.get(`${c.id}|${units()}`) ?? {}), [i.key]: ctl.value });
       if (spec.kind === "tool") spec.live?.(i.key, ctl.value);
     };
     ctl.addEventListener("change", commit);
@@ -210,7 +232,7 @@ function open(c: Command, spec: Spec): void {
 
 /** Show the dialog of the tool that is on, or hide it. */
 function sync(): void {
-  if (prefs.mode !== "full") {
+  if (prefs.mode !== "full" && !shown?.spec.simple) {
     if (shown) closeDialog();
     return;
   }

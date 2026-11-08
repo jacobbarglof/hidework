@@ -867,14 +867,16 @@ function drawCanvas(): void {
   };
   hide.flaws.forEach(drawFlaw);
   if (ui.drag) drawFlaw({ id: "", kind: ui.flawKind, severity: ui.flawSeverity, shape: { type: "circle", center: ui.drag.center, radiusMm: ui.drag.radius } });
-  // 100 mm scale bar.
-  const sx = cssW - pad - 100 * k;
+  // Scale bar: 100 mm, or 4 inches when the project measures in inches.
+  const inch = state.project?.units === "in";
+  const bar = inch ? 101.6 : 100;
+  const sx = cssW - pad - bar * k;
   const sy = cssH - 14;
   g.fillStyle = "#eadcc0";
-  g.fillRect(sx, sy, 100 * k, 4);
+  g.fillRect(sx, sy, bar * k, 4);
   g.font = "13px Georgia, serif";
   g.textAlign = "right";
-  g.fillText("100 mm", sx - 6, sy + 5);
+  g.fillText(inch ? "4 in" : "100 mm", sx - 6, sy + 5);
   g.textAlign = "start";
 }
 

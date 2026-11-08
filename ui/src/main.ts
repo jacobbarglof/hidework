@@ -22,8 +22,10 @@ import { showWelcome } from "./welcome";
 import { initControl } from "./control";
 import { h } from "./dom";
 import { initDrapeView, loadPresets, setDrapeVisible } from "./drape";
-import { snap } from "./editing";
+import { gridWords, snap } from "./editing";
 import { initLayout, visible } from "./layout";
+import { initDocks } from "./docks";
+import { initContextMenus } from "./context";
 import { closeFabricTest, fabricTestOpen, renderFabricTest, renderInspector } from "./panels";
 import { initPrefs, prefs, simple } from "./prefs";
 import { initRibbon, refreshRibbon } from "./ribbon";
@@ -62,7 +64,7 @@ function refreshChrome(): void {
   if (!state.project) return;
   renderStatus();
   const page = state.page === "a4" ? "A4" : "Letter";
-  $("info").textContent = `${state.pages} ${page} page${state.pages === 1 ? "" : "s"}  ·  ${state.project.units}${snap.on ? `  ·  snap ${snap.gridMm} mm` : ""}`;
+  $("info").textContent = `${state.pages} ${page} page${state.pages === 1 ? "" : "s"}  ·  ${state.project.units}${snap.on ? `  ·  snap ${gridWords()}` : ""}`;
   refreshRibbon();
   renderLibrary($("library"));
   renderBrowser($("browser"));
@@ -100,11 +102,13 @@ async function main(): Promise<void> {
   if (import.meta.env.DEV && !("__TAURI_INTERNALS__" in window)) await (await import("./devmock")).installDevMock();
   initPrefs();
   initLayout();
+  initDocks();
   initCanvas($<HTMLCanvasElement>("canvas"));
   initView3d($("view3d"));
   initDrapeView($("drape-view"));
   initRibbon();
   initCommandLine();
+  initContextMenus();
   subscribe(refreshChrome);
   wire();
   // The checklist's buttons, and ticking steps off when their command runs from anywhere.

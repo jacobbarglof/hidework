@@ -38,6 +38,7 @@ const PLAIN: Record<string, string> = {
   "Out from form": "Distance out from the bag",
   "Cutting waste, %": "Extra leather for waste, %",
   "Glue band, mm": "Width of the glue, mm",
+  "Glue band": "Width of the glue",
   Seam: "Kind of seam",
   "Glued to": "Glued onto",
   // buttons
@@ -57,7 +58,10 @@ export function plainWords(root: HTMLElement): void {
     // Only elements whose whole text is one known phrase, so sentences are never cut up.
     if (el.childElementCount) return;
     const t = el.textContent?.trim() ?? "";
-    const p = PLAIN[t];
+    let p = PLAIN[t];
+    // Length fields end in their unit ("Allowance, in"): look up the name without it.
+    const m = p ? null : /^(.*), (mm|in)$/.exec(t);
+    if (m && PLAIN[m[1]]) p = `${PLAIN[m[1]].replace(/, (mm|in)$/, "")}, ${m[2]}`;
     if (p) el.textContent = p;
   });
 }

@@ -53,6 +53,7 @@ pub fn entries() -> Vec<Entry> {
         e("belt-pouch", "Belt pouch", "Outdoor", "Front, gusset, back with a snap flap and two belt loops for a 38 mm belt.", belt_pouch),
         // Small goods
         e("key-fob", "Key fob", "Small goods", "Folded loop with a rivet and a key ring.", key_fob),
+        e("pouch-holder", "Pouch holder", "Small goods", "Makesupply flap-wallet size (109 mm wide) with side gussets and a tuck strap; holds about 36 loose nicotine pouches.", pouch_holder),
         e("key-case", "Key case, 6 hooks", "Small goods", "Folding case with a riveted 6-hook key plate and a snap tab.", key_case),
         e("cable-tie", "Cable organiser", "Small goods", "Strap with a line 20 snap to bundle a cable.", cable_tie),
         e("luggage-tag", "Luggage tag", "Small goods", "Two panels with a card window, open at one end for the card, and a buckle strap.", luggage_tag),
@@ -1298,5 +1299,192 @@ mod tests {
         let cp = computed_alone(&pc, 1.6);
         let deepest = cp.outline.iter().filter(|q| (q.x - 43.0).abs() < 1.5 && q.y < 50.0).map(|q| q.y).fold(0.0, f64::max);
         assert!((deepest - 10.0).abs() < 0.3, "{deepest}");
+    }
+}
+
+/// Pouch holder at the Makesupply Flap Wallet No. 1 size: one body piece 109 mm wide (a front
+/// with a scooped mouth, folded at the bottom onto the back, and a flap that tapers to its tip and
+/// tucks under a strap sewn across the front), made deep with a gusset on each side. The 16 mm
+/// gussets give a pocket about 101 x 63 x 16 mm: about 36 loose nicotine pouches (30 x 15 x 5 mm
+/// each), more than two tins' worth.
+fn pouch_holder() -> Project {
+    let mut p = project("Pouch holder", "vegtan-firm", 4.0);
+    let t = thickness(&p);
+    let (w, front, back, flap, depth) = (109.0, 67.0, 70.0, 75.0, 16.0);
+    let (f1, f2) = (front, front + back);
+    let tip = f2 + flap;
+    // Taper as in the Makesupply flap: straight for 4 mm past the fold, in 10.5 mm by 20 mm,
+    // then slowly to 16 mm in, with rounded corners at the tip.
+    let (mut body, sd) = outline(
+        "body",
+        "Body and flap",
+        &[
+            (0.0, 0.0, 0.0),
+            (w, 0.0, 0.0),
+            (w, f1, 0.0),
+            (w, f1 + front - M, 0.0),
+            (w, f2, 0.0),
+            (w, f2 + 4.0, 0.0),
+            (w - 10.5, f2 + 20.0, 4.0),
+            (w - 16.0, f2 + 58.0, 0.0),
+            (w - 16.0, tip, 8.0),
+            (16.0, tip, 8.0),
+            (16.0, f2 + 58.0, 0.0),
+            (10.5, f2 + 20.0, 4.0),
+            (0.0, f2 + 4.0, 0.0),
+            (0.0, f2, 0.0),
+            (0.0, f1 + front - M, 0.0),
+            (0.0, f1, 0.0),
+        ],
+    );
+    // The scooped mouth across the top of the front (two edges go in after edge 0).
+    notch(&mut body, 0, 85.0, 12.5);
+    let e = |k: usize| sd[k] + 2;
+    let (front_r, back_r, back_l, front_l) = (e(1), e(2), e(14), e(15));
+    stitch(&mut body, [front_r, back_r, back_l, front_l]);
+    // The bottom is the gussets' depth wide; the flap goes over the top round the contents.
+    fold(&mut body, "bottom", Orientation::Horizontal, f1, depth);
+    let over = (2.0 * (depth + 2.0 * t) / std::f64::consts::PI - t).max(0.0);
+    fold(&mut body, "flap-fold", Orientation::Horizontal, f2, over);
+    body.notes = "Front at the top: fold at the bottom line onto the back.\nThe flap folds over the top and tucks under the strap.".into();
+    let side = run_len(&body, t, &[front_r]);
+    let mut gr = gusset("Right gusset", side + 2.0 * M, depth, "m1", v(0.0, 0.0), "gusset-r");
+    let mut gl = gusset("Left gusset", side + 2.0 * M, depth, "m1", v(0.0, 0.0), "gusset-l");
+    for g in [&mut gr, &mut gl] {
+        g.notes = "2 to 3 oz turns easier. The square end goes to the bottom fold.".into();
+    }
+    // Closure strap, 18 mm as in the Makesupply pattern, a little long so the flap slides under.
+    let mut strap = panel("strap", "Closure strap", "m1", w + 2.0 * t, 18.0);
+    stitch(&mut strap, [1, 3]);
+    strap.grain_deg = 0.0;
+    strap.notes = "Ends sewn to the front, 18 mm below its top edge.".into();
+    p.pieces.push(body);
+    p.pieces.push(gr);
+    p.pieces.push(gl);
+    p.pieces.push(strap);
+    join(&mut p, ("body", &[front_r]), ("gusset-r", &[0]));
+    join(&mut p, ("body", &[back_r]), ("gusset-r", &[2]));
+    join(&mut p, ("body", &[front_l]), ("gusset-l", &[0]));
+    join(&mut p, ("body", &[back_l]), ("gusset-l", &[2]));
+    onto(&mut p, ("strap", &[1, 3]), "body");
+    lay_out(p)
+}
+
+fn stroke_with(id: String, kind: StrokeKind, tool: ToolKind, points: Vec<Vec2>, closed: bool, size: f64, spacing: f64, text: String, group: &str) -> ToolingStroke {
+    ToolingStroke { id, kind, tool, points, smooth: false, closed, size_mm: size, depth_mm: 0.0, spacing_mm: spacing, angle_deg: 0.0, side: 0, text, group: group.to_string() }
+}
+
+/// A tooling pattern from a black-on-white image: a swivel-knife cut round every black shape
+/// and its holes, with a beveler walked along each cut on the black side (the carving sinks the
+/// dark parts and leaves the light ones standing), scaled to `height_mm` tall round `centre`.
+pub fn traced_carving(png: &[u8], centre: Vec2, height_mm: f64, turned: bool, group: &str) -> Result<Vec<ToolingStroke>, String> {
+    let opts = crate::trace::TraceOptions { mm_per_px: 1.0, min_area_mm2: 30.0, max_pieces: 400, preview: false, ..Default::default() };
+    let res = crate::trace::trace_image(png, &opts)?;
+    let paths = res.traced_px;
+    if paths.is_empty() {
+        return Err("nothing traced".into());
+    }
+    let (mut lo, mut hi) = (v(f64::INFINITY, f64::INFINITY), v(f64::NEG_INFINITY, f64::NEG_INFINITY));
+    for q in paths.iter().flatten() {
+        lo = v(lo.x.min(q.x), lo.y.min(q.y));
+        hi = v(hi.x.max(q.x), hi.y.max(q.y));
+    }
+    // Turned half round for a panel whose top is at the larger y (the back of a folded piece).
+    let k = height_mm / (hi.y - lo.y).max(1e-9) * if turned { -1.0 } else { 1.0 };
+    let mid = (lo + hi) * 0.5;
+    let polys: Vec<Vec<Vec2>> = paths.iter().map(|path| crate::import::fit::rdp_closed(&path.iter().map(|&q| centre + (q - mid) * k).collect::<Vec<_>>(), 0.12)).collect();
+    let mut out = Vec::new();
+    for (i, pts) in polys.iter().enumerate() {
+        if pts.len() < 3 {
+            continue;
+        }
+        // Outlines nested an even number of times bound black; odd ones are white holes in it.
+        let depth = polys.iter().enumerate().filter(|&(j, q)| j != i && q.len() >= 3 && crate::tooling::point_in_polygon(pts[0], q)).count();
+        let black_inside = depth % 2 == 0;
+        let ccw = signed_area(pts) > 0.0;
+        let side = if ccw == black_inside { 1 } else { -1 };
+        out.push(stroke_with(format!("{group}-cut-{}", i + 1), StrokeKind::Cut, ToolKind::SwivelKnife, pts.clone(), true, 0.0, 0.0, String::new(), group));
+        let mut bevel = stroke_with(format!("{group}-bevel-{}", i + 1), StrokeKind::Line, ToolKind::Beveler, pts.clone(), true, 0.0, 0.0, String::new(), group);
+        bevel.side = side;
+        out.push(bevel);
+    }
+    Ok(out)
+}
+
+/// Lines of alphabet stamps centred on `centre`, `size` mm letters.
+pub fn stamped_lines(lines: &[&str], centre: Vec2, size: f64, group: &str) -> Vec<ToolingStroke> {
+    let gap = size * 1.45;
+    let sp = size * 1.05;
+    let top = centre.y - gap * (lines.len() as f64 - 1.0) / 2.0;
+    lines
+        .iter()
+        .enumerate()
+        .map(|(i, line)| {
+            let n = line.chars().count() as f64;
+            let at = v(centre.x - (n - 1.0) * sp / 2.0, top + gap * i as f64);
+            stroke_with(format!("{group}-{}", i + 1), StrokeKind::Letters, ToolKind::Letter, vec![at], false, size, sp, line.to_string(), group)
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod pouch_holder_tests {
+    use super::*;
+
+    #[test]
+    fn pouch_holder_seams_match() {
+        let p = pouch_holder();
+        let c = compute(&p);
+        let body = p.pieces.iter().position(|x| x.id == "body").unwrap();
+        let st: Vec<usize> = p.pieces[body].edges.iter().enumerate().filter(|(_, e)| e.stitched).map(|(i, _)| i).collect();
+        let lens: Vec<f64> = st.iter().map(|&k| c.pieces[body].edges[k].stitch_length_mm).collect();
+        let g = p.pieces.iter().position(|x| x.id == "gusset-r").unwrap();
+        let gl = c.pieces[g].edges[0].stitch_length_mm;
+        eprintln!("body sides {lens:?}, gusset {gl:.1}");
+        assert_eq!(lens.len(), 4);
+        assert!(lens.iter().all(|l| (l - lens[0]).abs() < 1.5), "{lens:?}");
+        assert!((gl - lens[0]).abs() < 4.0, "gusset {gl:.1} vs side {:.1}", lens[0]);
+        // Makesupply size: 109 mm wide.
+        let bw = c.pieces[body].bounds.max.x - c.pieces[body].bounds.min.x;
+        assert!((bw - 109.0).abs() < 1.0, "{bw}");
+    }
+
+    /// Writes Christian's holder (wolf on the back, his quote on the front) when HIDEWORK_WOLF
+    /// points at the wolf image and HIDEWORK_OUT at the file to write.
+    #[test]
+    #[ignore]
+    fn write_christians_holder() {
+        let (Ok(img), Ok(out)) = (std::env::var("HIDEWORK_WOLF"), std::env::var("HIDEWORK_OUT")) else { return };
+        let mut p = pouch_holder();
+        p.name = "Pouch holder for Christian".into();
+        let png = std::fs::read(img).unwrap();
+        let body = p.pieces.iter_mut().find(|x| x.id == "body").unwrap();
+        // The back runs from the bottom fold (67) to the flap fold (137), its top at 137: the
+        // wolf is turned so it stands upright on the finished holder.
+        let mut tooling = traced_carving(&png, v(54.5, 102.0), 58.0, true, "wolf").unwrap();
+        // The quote on the flap, below the strap where it shows when closed.
+        tooling.extend(stamped_lines(&["COURAGE IS BEING", "SCARED TO DEATH", "AND SADDLING", "UP ANYWAY"], v(54.5, 194.0), 3.2, "quote"));
+        body.tooling = tooling;
+        body.notes = "Front at the top: fold at the bottom line onto the back.
+Wolf: cut, bevel toward the dark parts, background or dye them.
+Quote on the flap, 1/8 in letters. The flap tucks under the strap.".into();
+        // The KOCA strap stamp: letters 10 mm tall, 49.7 mm long, centred.
+        let strap = p.pieces.iter_mut().find(|x| x.id == "strap").unwrap();
+        let mid = strap.vertices.iter().fold(v(0.0, 0.0), |a, &q| a + q) * (1.0 / strap.vertices.len() as f64);
+        strap.tooling = stamped_lines(&["KOCA"], mid, 10.0, "mark");
+        strap.tooling[0].spacing_mm = 12.82;
+        strap.tooling[0].points[0] = mid - v(1.5 * 12.82, 0.0);
+        strap.notes = "KOCA strap stamp (58 x 15 mm) centred.
+Ends sewn to the front, 18 mm below its top edge.".into();
+        let n: usize = p.pieces.iter().map(|x| x.tooling.len()).sum();
+        eprintln!("{n} tooling strokes");
+        std::fs::write(&out, serde_json::to_string_pretty(&p).unwrap()).unwrap();
+        // A picture of the sheet and a printable template, beside the project file.
+        let c = compute(&p);
+        let base = out.trim_end_matches(".hidework");
+        std::fs::write(format!("{base}.svg"), crate::svg::to_svg(&crate::sheet::build_sheet(&p, &c))).unwrap();
+        let (pdf, pages) = crate::pdf::print(&p, &c, crate::pdf::PageSize::Letter, crate::print::PrintLayout::FewestPages);
+        std::fs::write(format!("{base} (Letter).pdf"), pdf).unwrap();
+        eprintln!("{pages} Letter page(s)");
     }
 }

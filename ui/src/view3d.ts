@@ -16,6 +16,7 @@ import { createViewCube, groundGrid, studioBackground, type ViewCube } from "./s
 import { markTextures, stitchMeshes, updateDecor, updateStitches, type Metal, type StitchMeshes } from "./fittings";
 import { HardwareLayer } from "./hardware/instances";
 import { edgeMaterial as rimMaterial, makeRim, writeRim } from "./hardware/edges";
+import { framesFor, noteFrame, noteSim, onQualityChange, quality, type Quality } from "./quality";
 
 /** "orbit" is the default: left-drag on the leather pulls it, on empty space orbits. "pan" makes
  * left-drag pan everywhere (the navigation bar's Pan). */
@@ -55,6 +56,7 @@ let host: HTMLElement;
 let renderer: THREE.WebGLRenderer;
 let composer: EffectComposer;
 let gtao: GTAOPass;
+let smaa: SMAAPass;
 let scene: THREE.Scene;
 let camera: THREE.PerspectiveCamera;
 let controls: OrbitControls;
@@ -92,7 +94,7 @@ const raycaster = new THREE.Raycaster();
 export function initView3d(el: HTMLElement): void {
   host = el;
   renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true });
-  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  renderer.setPixelRatio(Math.min(quality().pixelRatio, window.devicePixelRatio || 1));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -135,16 +137,33 @@ export function initView3d(el: HTMLElement): void {
   gtao.updateGtaoMaterial({ radius: 6, distanceExponent: 1, thickness: 3, scale: 1.2 });
   composer.addPass(gtao);
   composer.addPass(new OutputPass());
-  composer.addPass(new SMAAPass(1, 1));
+  smaa = new SMAAPass(1, 1);
+  composer.addPass(smaa);
+  applyQuality(quality());
+  // A change of quality (by the user, or Auto stepping down on a slow computer) redraws at once
+  // and, when the mesh detail changed, rebuilds the model in place, keeping its shape.
+  onQualityChange((q, remesh) => {
+    applyQuality(q);
+    resize();
+    if (remesh && sim3d.info && !sim3d.building) void rebuild(true, true);
+  });
   new ResizeObserver(resize).observe(el);
   resize();
   bindPointer();
   viewCube = createViewCube(el, (dir) => lookFrom(dir), () => viewPreset("iso"));
+  let last = performance.now();
   const loop = () => {
     requestAnimationFrame(loop);
+    const now = performance.now();
+    const elapsed = now - last;
+    last = now;
     controls.mouseButtons.LEFT = sim3d.tool === "pan" ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
     controls.update();
-    if (sim3d.running && !stepping && positions) void step();
+    // Keep up with real time: a 60 Hz screen needs a frame and a half of simulation per redraw
+    // (the solver's frame is 1/90 s); a slow redraw catches up by up to three.
+    if (sim3d.running && !stepping && positions) void step(framesFor(elapsed));
+    const note = noteFrame(now, sim3d.running);
+    if (note) setStatus(note);
     composer.render();
     viewCube?.sync(camera, controls.target);
   };
@@ -191,7 +210,7 @@ export async function rebuild(keepRunning = false, carry = false): Promise<void>
   try {
     const info = await invoke<SimInfo>("sim_start", {
       project: state.project,
-      spec: { foldAngleDeg: sim3d.foldAngle, props: sim3d.props, liftMm: sim3d.liftMm },
+      spec: { foldAngleDeg: sim3d.foldAngle, props: sim3d.props, liftMm: sim3d.liftMm, resolution: quality().resolution },
       carry,
     });
     sim3d.info = info;
@@ -568,13 +587,15 @@ export function setHeat(on: boolean): void {
   notify();
 }
 
-async function step(): Promise<void> {
+async function step(frames = 1): Promise<void> {
   stepping = true;
   try {
-    const buf = await invoke<ArrayBuffer>("sim_step", { frames: 1 });
+    const buf = await invoke<ArrayBuffer>("sim_step", { frames });
     applyPositions(new Float32Array(buf));
-    sim3d.frames++;
-    if (sim3d.frames % 20 === 0) {
+    noteSim(frames);
+    const before = sim3d.frames;
+    sim3d.frames += frames;
+    if (Math.floor(sim3d.frames / 20) !== Math.floor(before / 20)) {
       await refreshStatus();
       notify();
       if (sim3d.status?.metrics.settled && !dragging) {
@@ -819,4 +840,18 @@ export function capture3d(): string {
 
 export function needsRebuild(): boolean {
   return sim3d.builtVersion !== version;
+}
+
+/** Draw at the chosen quality: pixel density, soft shadows, ambient occlusion, anti-aliasing. */
+function applyQuality(q: Quality): void {
+  renderer.setPixelRatio(Math.min(q.pixelRatio, window.devicePixelRatio || 1));
+  renderer.shadowMap.enabled = q.shadows;
+  sun.castShadow = q.shadows;
+  if (sun.shadow.mapSize.x !== q.shadowMap) {
+    sun.shadow.mapSize.set(q.shadowMap, q.shadowMap);
+    sun.shadow.map?.dispose();
+    sun.shadow.map = null;
+  }
+  gtao.enabled = q.occlusion;
+  smaa.enabled = q.antialias;
 }

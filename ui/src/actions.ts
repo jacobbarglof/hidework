@@ -14,7 +14,7 @@ import { simple } from "./prefs";
 import { mirrorPiece, rectPiece, rotatePiece } from "./ops";
 import { edit, piece, placing, setProject, setStatus, state, type Tool } from "./store";
 import type { FabOptions, Piece, TemplateInfo } from "./types";
-import { fromDisp } from "./units";
+import { fmtLen, parseLength } from "./units";
 import { capture3d, needsRebuild, rebuild, setRunning, sim3d, type Tool3d } from "./view3d";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -225,9 +225,10 @@ export async function thumbnail(id: string): Promise<string> {
 }
 
 /** New project: a gallery of picture cards, grouped by category. */
-export async function showTemplates(): Promise<void> {
+/** Every starter pattern on one page; `query` fills in the search box (to show one pattern). */
+export async function showTemplates(query = ""): Promise<void> {
   const ts = await loadTemplates();
-  const filter = h("input", { type: "text", placeholder: "Find a pattern by name…", class: "modal-filter", "aria-label": "Find a pattern" }) as HTMLInputElement;
+  const filter = h("input", { type: "text", placeholder: "Find a pattern by name…", class: "modal-filter", "aria-label": "Find a pattern", value: query }) as HTMLInputElement;
   const list = h("div", { class: "tpl-dialog" });
   const fill = () => {
     const q = filter.value.trim().toLowerCase();
@@ -378,17 +379,9 @@ export function rotateSelected(clockwise = true): void {
 
 // ---------- typed geometry ----------
 
-/** A length typed on the command line: plain numbers are in the project's units; 3in, 80mm, 8cm work too. */
+/** A length typed on the command line: plain numbers are in the project's units; 3in, 80mm, 8cm, 3 1/2 and 3/8 work too. */
 export function parseLen(s: string | undefined): number | null {
-  if (!s) return null;
-  const m = /^(-?\d*\.?\d+)\s*(mm|cm|in|"|)$/i.exec(s.trim());
-  if (!m) return null;
-  const v = parseFloat(m[1]);
-  const unit = m[2].toLowerCase();
-  if (unit === "mm") return v;
-  if (unit === "cm") return v * 10;
-  if (unit === "in" || unit === '"') return v * 25.4;
-  return fromDisp(v, state.project.units);
+  return parseLength(s, state.project.units);
 }
 
 function addPiece(pc: Piece, what: string): void {
@@ -404,7 +397,7 @@ function centred(w: number, hgt: number): { x: number; y: number } {
 
 export function addRect(w: number, hgt: number): void {
   ensureVisible("2d");
-  addPiece(rectPiece(centred(w, hgt), w, hgt, "Panel"), `Panel ${w} × ${hgt} mm added.`);
+  addPiece(rectPiece(centred(w, hgt), w, hgt, "Panel"), `Panel ${fmtLen(w, state.project.units)} × ${fmtLen(hgt, state.project.units)} added.`);
 }
 
 /** A regular polygon with `n` sides and the given width across its points. */
@@ -418,5 +411,5 @@ export function addRegularPolygon(n: number, size: number): void {
     return { x: +(r + r * Math.cos(a)).toFixed(3), y: +(r + r * Math.sin(a)).toFixed(3) };
   });
   pc.edges = pc.vertices.map(() => ({ type: "line", stitched: false }));
-  addPiece(pc, `${sides}-sided panel added, ${size} mm across.`);
+  addPiece(pc, `${sides}-sided panel added, ${fmtLen(size, state.project.units)} across.`);
 }

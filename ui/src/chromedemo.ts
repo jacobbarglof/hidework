@@ -7,6 +7,8 @@
 //   ?ui=full&mark=piece                the marking menu over the first piece
 //   ?ui=full&dlg=round                 the Round corner dialog
 //   ?theme=light&scale=125             colours and text size
+//   ?ui=full&panels=panelstop          panel commands (mergepanels, collapsepanels, librarypanel&arg=float)
+//   ?ui=full&rc=.panel-head            right-click an element
 
 import { COMMANDS } from "./commands";
 import { showMarking } from "./marking";
@@ -61,6 +63,19 @@ export async function runDemo(): Promise<void> {
     const in3d = mark === "leather" || mark === "space3d";
     const r = document.getElementById(in3d ? "view3d" : "stage")!.getBoundingClientRect();
     showMarking(mark as Parameters<typeof showMarking>[0], r.left + r.width * 0.5, r.top + r.height * 0.36);
+  }
+  // ?panels=mergepanels,collapsepanels runs panel commands; ?rc=<css selector> right-clicks it.
+  for (const id of (q.get("panels") ?? "").split(",").filter(Boolean)) COMMANDS.find((c) => c.id === id)?.run(q.get("arg") ? [q.get("arg")!] : []);
+  const rc = q.get("rc");
+  if (rc) {
+    await wait(300);
+    const el = document.querySelector<HTMLElement>(rc);
+    const r = el?.getBoundingClientRect();
+    if (el && r) {
+      const at = { clientX: r.left + Math.min(40, r.width / 2), clientY: r.top + r.height / 2, bubbles: true, cancelable: true, button: 2 };
+      el.dispatchEvent(new PointerEvent("pointerdown", at));
+      el.dispatchEvent(new MouseEvent("contextmenu", at));
+    }
   }
   const dlg = q.get("dlg");
   if (dlg) {

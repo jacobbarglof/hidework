@@ -7,6 +7,7 @@ import { button, check, choose, field, h, num, text } from "./dom";
 import { edit, notify, piece, placing, setProject, setStatus, state } from "./store";
 import { DESIGNS, strokeControls, toolName } from "./tooling";
 import { fmtLen } from "./units";
+import { lenBox, unitLabel } from "./lenbox";
 import type { Adhesive, BagParams, BagStyle, Bom, Catalogue, Construction, EdgeFinish, Face, Join, MarkKind, Piece, StitchKind } from "./types";
 
 export const craft = { catalogue: null as Catalogue | null, loading: false };
@@ -84,7 +85,7 @@ export function stitchSection(pc: Piece): Node[] {
         }
       })) : h("span", {}, "…")),
       field("Rows", num("st-rows", pc.stitch.rows ?? 1, (v) => edit(() => (pc.stitch.rows = Math.max(1, Math.min(4, Math.round(v))))), { step: 1, min: 1, max: 4 })),
-      field("Row gap", num("st-gap", pc.stitch.rowGapMm || 4, (v) => edit(() => (pc.stitch.rowGapMm = Math.max(1, v))), { step: 0.5, min: 1 })),
+      field(`Row gap, ${unitLabel()}`, lenBox("st-gap", pc.stitch.rowGapMm || 4, (v) => edit(() => (pc.stitch.rowGapMm = Math.max(1, v))), 1)),
     ),
     info ? h("p", { class: "hint" }, `${info.description} About ${info.threadFactor}× the seam length in ${info.lace ? "lace" : "thread"}.`) : null,
   ].filter(Boolean) as Node[];
@@ -136,7 +137,7 @@ export function edgeFinishSection(pc: Piece, i: number): Node[] {
       "div",
       { class: "grid3" },
       field("Finish", opts.length ? choose("e-fin", opts, fin, (v) => edit(() => (pc.edges[i].finish = v))) : h("span", {}, "…")),
-      fin === "turned" ? field("Turn, mm", num("e-turn", e.turnMm || 6, (v) => edit(() => (pc.edges[i].turnMm = Math.max(1, v))), { step: 0.5, min: 1 })) : null,
+      fin === "turned" ? field(`Turn, ${unitLabel()}`, lenBox("e-turn", e.turnMm || 6, (v) => edit(() => (pc.edges[i].turnMm = Math.max(1, v))), 1)) : null,
       field("Crease line", check("e-crease", !!e.crease, (v) => edit(() => (pc.edges[i].crease = v)))),
     ),
     info ? h("p", { class: "hint" }, info.description) : null,
@@ -169,7 +170,7 @@ export function joinCraftSection(j: Join): Node[] {
           "div",
           { class: "grid2" },
           field(con === "piped" ? "Piping cover" : con === "bound" ? "Binding" : "Welt", choose("j-ins", [["", "Same leather"], ...mats], j.insertMaterialId ?? "", (v) => edit(() => (j.insertMaterialId = v || null)))),
-          field(con === "piped" ? "Cord, mm" : "Width, mm", num("j-insw", j.insertMm ?? 0, (v) => edit(() => (j.insertMm = Math.max(0, v))), { step: 0.5, min: 0 })),
+          field(`${con === "piped" ? "Cord" : "Width"}, ${unitLabel()}`, lenBox("j-insw", j.insertMm ?? 0, (v) => edit(() => (j.insertMm = Math.max(0, v))), 0)),
         )
       : null,
     head("Bonding"),
@@ -177,7 +178,7 @@ export function joinCraftSection(j: Join): Node[] {
       "div",
       { class: "grid2" },
       field("Glue", glues.length ? choose("j-glue", glues, glue, (v) => edit(() => (j.glue = v))) : h("span", {}, "…")),
-      glue !== "none" ? field("Glue band, mm", num("j-gw", j.glueWidthMm ?? 0, (v) => edit(() => (j.glueWidthMm = Math.max(0, v))), { step: 1, min: 0 })) : null,
+      glue !== "none" ? field(`Glue band, ${unitLabel()}`, lenBox("j-gw", j.glueWidthMm ?? 0, (v) => edit(() => (j.glueWidthMm = Math.max(0, v))), 0)) : null,
     ),
     gInfo && glue !== "none" ? h("p", { class: "hint" }, `${gInfo.description} About ${gInfo.shearMpa} MPa in shear (estimate). The template shows the band to glue.`) : null,
   ].filter(Boolean) as Node[];
@@ -257,7 +258,7 @@ async function throughBelow(pid: string, id: string): Promise<void> {
 
 export function marksList(pc: Piece, select: (id: string) => () => void): Node[] {
   const out: Node[] = (pc.marks ?? []).map((mk) =>
-    h("div", { class: "seam", onclick: select(mk.id) }, h("strong", {}, MARKS.find((m) => m[0] === mk.kind)?.[1] ?? mk.kind), h("span", {}, mk.text || mk.pattern || `${mk.size.x} × ${mk.size.y} mm`)),
+    h("div", { class: "seam", onclick: select(mk.id) }, h("strong", {}, MARKS.find((m) => m[0] === mk.kind)?.[1] ?? mk.kind), h("span", {}, mk.text || mk.pattern || `${fmtLen(mk.size.x, state.project.units)} × ${fmtLen(mk.size.y, state.project.units)}`)),
   );
   return [...out, ...toolingList(pc)];
 }
@@ -300,8 +301,8 @@ export function markInspector(pid: string, id: string, back: Node): Node[] {
     h(
       "div",
       { class: "grid3" },
-      field("Width", num("mk-w", mk.size.x, (v) => edit(() => (mk.size.x = Math.max(2, v))), { step: 1, min: 2 })),
-      field("Height", num("mk-h", mk.size.y, (v) => edit(() => (mk.size.y = Math.max(2, v))), { step: 1, min: 2 })),
+      field(`Width, ${unitLabel()}`, lenBox("mk-w", mk.size.x, (v) => edit(() => (mk.size.x = Math.max(2, v))), 2)),
+      field(`Height, ${unitLabel()}`, lenBox("mk-h", mk.size.y, (v) => edit(() => (mk.size.y = Math.max(2, v))), 2)),
       field("Angle °", num("mk-a", mk.angleDeg ?? 0, (v) => edit(() => (mk.angleDeg = v)), { step: 15 })),
       field("X", num("mk-x", Math.round(mk.center.x * 10) / 10, (v) => edit(() => (mk.center.x = v)), { step: 0.5 })),
       field("Y", num("mk-y", Math.round(mk.center.y * 10) / 10, (v) => edit(() => (mk.center.y = v)), { step: 0.5 })),

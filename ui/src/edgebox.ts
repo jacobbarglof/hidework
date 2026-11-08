@@ -6,7 +6,7 @@ import { edgeAngle, edgeLength, edgeMiddle, setEdgeAngle, setEdgeLength } from "
 import { prefs, simple } from "./prefs";
 import { computedPiece, edit, isMulti, notify, piece, setStatus, state } from "./store";
 import { toStaged } from "./tooling";
-import { fromDisp } from "./units";
+import { parseLength, unitWord } from "./units";
 import type { V } from "./types";
 
 interface Host {
@@ -101,7 +101,7 @@ export function place(): void {
     lenIn.value = dispLen(edgeLength(pc, cur.index));
     angIn.value = String(Math.round(edgeAngle(pc, cur.index) * 10) / 10);
   }
-  unitEl.textContent = state.project.units === "in" ? "in" : "mm";
+  unitEl.textContent = unitWord(state.project.units);
   const curved = pc.edges[cur.index].type === "cubic";
   curveEl.textContent = curved ? "Curved: the length is measured along the curve." : "Enter sets it.";
   // Beside the middle of the edge, on the outside of the piece.
@@ -136,30 +136,35 @@ export function place(): void {
   box.style.top = `${y / z}px`;
 }
 
-function parse(s: string): number | null {
-  const m = /^\s*(-?\d*\.?\d+)\s*(mm|cm|in|"|°|)\s*$/i.exec(s);
-  if (!m) return null;
-  return parseFloat(m[1]) * (m[2].toLowerCase() === "cm" ? 10 : 1);
+/** An angle in degrees ("30", "30°"). */
+function parseAngle(s: string): number | null {
+  const m = /^\s*(-?\d*\.?\d+)\s*°?\s*$/.exec(s);
+  return m ? parseFloat(m[1]) : null;
 }
 
 function apply(input: HTMLInputElement): void {
   const cur = current();
   if (!cur) return;
   const pc = piece(cur.id)!;
-  const v = parse(input.value);
-  if (v === null) {
-    setStatus(`"${input.value}" is not a number. Type a number, then Enter.`);
-    return;
-  }
   if (input === lenIn) {
-    // A unit typed with the number wins; otherwise the project's units.
-    const mm = /in|"/i.test(input.value) ? v * 25.4 : /mm|cm/i.test(input.value) ? v : fromDisp(v, state.project.units);
+    // A unit typed with the number wins (3in, 80mm, 8cm); otherwise the project's units. Inches
+    // can be typed as fractions too: 3/8, 3 1/2, 3-1/2.
+    const mm = parseLength(input.value, state.project.units);
+    if (mm === null) {
+      setStatus(`"${input.value}" is not a length. Type a number${state.project.units === "in" ? " such as 4.5 or 4 1/2" : ""}, then Enter.`);
+      return;
+    }
     if (Math.abs(mm - edgeLength(pc, cur.index)) < 0.005) return;
     if (mm <= 0.1) return setStatus("An edge needs some length. Type a number bigger than 0.");
     let ok = false;
     edit(() => (ok = setEdgeLength(pc, cur.index, mm)));
-    setStatus(ok ? `The edge is now ${dispLen(mm)} ${state.project.units === "in" ? "in" : "mm"} long. Ctrl+Z takes it back.` : "That edge could not be changed.");
+    setStatus(ok ? `The edge is now ${dispLen(mm)} ${unitWord(state.project.units)} long. Ctrl+Z takes it back.` : "That edge could not be changed.");
   } else {
+    const v = parseAngle(input.value);
+    if (v === null) {
+      setStatus(`"${input.value}" is not an angle. Type a number of degrees, then Enter.`);
+      return;
+    }
     if (Math.abs(v - edgeAngle(pc, cur.index)) < 0.005) return;
     edit(() => setEdgeAngle(pc, cur.index, v));
     setStatus(`The edge now points at ${v}° (0 is level to the right, 90 is straight up). Ctrl+Z takes it back.`);

@@ -26,10 +26,18 @@
       </div>
     </nav>
     <main class="workspace layout-both" id="workspace">
-      <aside class="dock left">
-        <section id="steps" class="steps hidden" aria-label="Your steps"></section>
-        <div id="library" class="library"></div>
+      <aside class="dock left" id="dock-left">
+        <section class="panel" id="panel-library" data-panel="library" aria-label="Library">
+          <div class="panel-head"></div>
+          <div class="panel-body">
+            <section id="steps" class="steps hidden" aria-label="Your steps"></section>
+            <div id="library" class="library"></div>
+          </div>
+        </section>
       </aside>
+      <div class="center">
+      <div class="dock top" id="dock-top"></div>
+      <div class="windows" id="windows">
       <section class="window w3d">
         <div class="win-head" id="head3d"></div>
         <div id="view3d" class="win-body"></div>
@@ -43,10 +51,18 @@
         <div id="stage" class="win-body"><canvas id="canvas" tabindex="0"></canvas></div>
         <div id="nav2d" class="navbar"></div>
       </section>
-      <aside class="dock right">
-        <div id="browser" class="browser"></div>
-        <div id="inspector" class="property-editor"></div>
+      </div>
+      </div>
+      <aside class="dock right" id="dock-right">
+        <section class="panel" id="panel-browser" data-panel="browser" aria-label="Browser">
+          <div class="panel-head"></div>
+          <div class="panel-body">
+            <div id="browser" class="browser"></div>
+            <div id="inspector" class="property-editor"></div>
+          </div>
+        </section>
       </aside>
+      <div class="dock-float" id="dock-float"></div>
     </main>
     <div class="timeline" id="timeline" aria-label="History"></div>
     <footer class="statusbar">

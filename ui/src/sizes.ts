@@ -18,7 +18,7 @@ import { ensureVisible } from "./layout";
 import { panel } from "./panels";
 import { edit, notify, piece, selectedPieceId, setStatus, state, whenComputed } from "./store";
 import type { EdgeRef, Piece, Project, V } from "./types";
-import { fromDisp, toDisp } from "./units";
+import { parseLength, toDisp } from "./units";
 import { offerUndo } from "./commandline";
 import { markStep } from "./guide";
 
@@ -317,11 +317,12 @@ function sizeRow(key: string, question: string, mm: number, apply: (mm: number) 
   const u = state.project.units;
   const step = u === "in" ? 6.35 : 5;
   const shown = u === "in" ? Math.round(toDisp(mm, u) * 100) / 100 : Math.round(mm * 10) / 10;
-  const input = h("input", { type: "number", class: "size-input", value: String(shown), step: u === "in" ? "0.25" : "1", min: "1", "data-key": key, "aria-label": question }) as HTMLInputElement;
+  // Text, not a number box, so inches can be typed as fractions (4 1/2, 3/8) as well as decimals.
+  const input = h("input", { type: "text", inputMode: "decimal", autocomplete: "off", class: "size-input", value: String(shown), "data-key": key, "aria-label": question }) as HTMLInputElement;
   const commit = () => {
-    const v = parseFloat(input.value);
-    if (Number.isFinite(v) && v > 0) apply(fromDisp(v, u));
-    else setStatus("Type a number, for example 95, then press Enter.");
+    const v = parseLength(input.value, u);
+    if (v !== null && v > 0) apply(v);
+    else setStatus(u === "in" ? "Type a number, for example 4.5 or 4 1/2, then press Enter." : "Type a number, for example 95, then press Enter.");
   };
   input.addEventListener("change", commit);
   input.addEventListener("keydown", (e) => {

@@ -234,6 +234,13 @@ const ICONS: Record<string, string> = {
   layout3d: `<rect x="2" y="4" width="20" height="16"/>` + fo(T, `<path d="M12 7l5 2.5v5L12 17l-5-2.5v-5z"/>`) + `<path d="M7 9.5l5 2.5 5-2.5M12 12v5"/>`,
   layoutboth: `<rect x="2" y="4" width="20" height="16"/><path d="M12 4v16"/>` + fo(T, `<path d="M7 8.5l3 1.5v3.2l-3 1.6-3-1.6V10z"/>`) + fo(T, `<path d="M14.5 9h5v6h-5z"/>`),
   layoutpattern: `<rect x="2" y="4" width="20" height="16"/>` + fo(T, `<path d="M6 8h12v8H6z"/>`) + `<path d="M8 10h8v4H8z" stroke-dasharray="1.4 1.2" stroke-width="1.2"/>`,
+  // Panels: the app window with the panel in question tinted.
+  panelleft: `<rect x="2" y="4" width="20" height="16"/>` + fo(T, `<rect x="2" y="4" width="6" height="16"/>`),
+  panelright: `<rect x="2" y="4" width="20" height="16"/>` + fo(T, `<rect x="16" y="4" width="6" height="16"/>`),
+  paneltop: `<rect x="2" y="4" width="20" height="16"/>` + fo(T, `<rect x="2" y="4" width="20" height="5"/>`),
+  panelfloat: `<rect x="2" y="4" width="20" height="16" ${THIN}/>` + fo(T, `<rect x="8" y="8" width="10" height="8"/>`),
+  panelmerge: `<rect x="2" y="4" width="20" height="16"/>` + fo(T, `<rect x="16" y="4" width="6" height="16"/>`) + `<path d="M16 12h6"/><path d="M5 12h7M9.5 9.5L12 12l-2.5 2.5"/>`,
+  panelcollapse: `<rect x="2" y="4" width="20" height="16"/><path d="M6 4v16M18 4v16"/><path d="M10.5 9.5L8.5 12l2 2.5M13.5 9.5l2 2.5-2 2.5"/>`,
   units: fo(T, `<rect x="2" y="7" width="20" height="10"/>`) + `<path d="M4 7v3.5M7 7v2M10 7v3.5M13 7v2M16 7v3.5M19 7v2M5 17v-3.5M12 17v-3.5M19 17v-3.5M8.5 17v-2M15.5 17v-2" ${THIN}/>`,
   // ---------- help and settings ----------
   help: fo(T, `<path d="M3 3.5h18v13h-9l-5 4.5v-4.5H3z"/>`) + `<path d="M9.5 8.3a2.5 2.5 0 114 2c-.9.6-1.5 1-1.5 2.2"/>` + dot(12, 14.6),

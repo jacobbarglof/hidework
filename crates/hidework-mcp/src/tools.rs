@@ -55,7 +55,7 @@ pub fn list() -> Vec<Value> {
             &[],
         ),
         tool("list_templates", "Starter projects available for new_project.", json!({}), &[]),
-        tool("new_project", "Start a new project from a template id (list_templates gives all 51, e.g. blank, card-wallet, bifold, belt, journal-cover, tote, messenger). Discards unsaved changes.", json!({"template": {"type": "string"}}), &["template"]),
+        tool("new_project", "Start a new project from a template id (list_templates gives all 52, e.g. blank, card-wallet, bifold, belt, journal-cover, tote, messenger). Discards unsaved changes.", json!({"template": {"type": "string"}}), &["template"]),
         tool("open_project", "Open a .hidework file.", json!({"path": {"type": "string"}}), &["path"]),
         tool("save_project", "Save the project (to its current file, or to path).", json!({"path": {"type": "string"}}), &[]),
         tool("set_project", "Replace the whole project with the given JSON (same shape as get_state includeProject).", json!({"project": {"type": "object"}}), &["project"]),

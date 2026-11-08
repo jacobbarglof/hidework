@@ -3,13 +3,13 @@
 // paper, the 3D leather or empty 3D space), with a short list of more below. Move the mouse
 // toward a command and click anywhere in that direction, or click it directly. Esc or a click in
 // the middle closes it. A right-drag still pans (2D) or orbits (3D); only a still right-click
-// opens the menu. Full tools only.
+// opens the menu. Simple mode gets a plain list of a few commands instead.
 
 import { COMMANDS, isEnabled, keyText, label, lastCommand, runCommand, type Command } from "./commands";
 import { selectAt } from "./canvas";
 import { h } from "./dom";
 import { icon } from "./icons";
-import { closeMenu } from "./menus";
+import { closeMenu, openMenu, type MenuItem } from "./menus";
 import { hideTip } from "./ribbon";
 import { prefs, unzoom } from "./prefs";
 import { closeSearch } from "./search";
@@ -196,12 +196,39 @@ function hook(el: HTMLElement, where: "2d" | "3d"): void {
     e.preventDefault();
     const d = down;
     down = null;
-    if (prefs.mode !== "full" || !d || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5) return;
+    if (!d || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5) return;
     let ctx: Ctx;
     if (where === "2d") ctx = selectAt(e.clientX, e.clientY);
     else ctx = leatherAt(e.clientX, e.clientY) ? "leather" : "space3d";
-    open(ctx, e.clientX, e.clientY);
+    if (prefs.mode === "full") open(ctx, e.clientX, e.clientY);
+    else openPlain(ctx, e.clientX, e.clientY);
   });
+}
+
+/** Simple mode: a few everyday commands for what is under the mouse, in a plain list with big
+ * rows and plain names (no ring). */
+const PLAIN: Record<Ctx, string[]> = {
+  piece: ["size", "duplicate", "mirror", "rotate", "delete", "check"],
+  multi: ["align", "duplicate", "delete"],
+  edge: ["sew", "measure", "delete"],
+  vertex: ["round", "delete"],
+  hole: ["delete"],
+  fold: ["delete"],
+  hardware: ["delete"],
+  none: ["rect", "roundrect", "circle", "polygon", "paste", "selectall", "fit", "undo"],
+  leather: ["simulate", "reset", "home", "fit"],
+  space3d: ["simulate", "home", "fit", "reset"],
+};
+
+function openPlain(ctx: Ctx, x: number, y: number): void {
+  closeMarking();
+  closeSearch();
+  hideTip();
+  if (!byId.size) COMMANDS.forEach((c) => byId.set(c.id, c));
+  const rows: MenuItem[] = [{ heading: MENUS[ctx].title }];
+  for (const c of PLAIN[ctx].map(cmd).filter((c): c is Command => !!c))
+    rows.push({ label: c.simpleLabel ?? c.name, icon: c.icon, help: c.help, enabled: () => isEnabled(c), checked: () => c.active?.() ?? false, run: () => invoke(c) });
+  openMenu(null, rows, { at: { x, y }, big: true });
 }
 
 /** Open the menu for a context at a point (for screenshots and tests). */

@@ -387,6 +387,15 @@ export interface UnionResult {
  * only meet at a point.
  */
 export function unionRings(p0: Ring, q0: Ring, tol = 0.02): UnionResult | { error: string } {
+  return combineRings(p0, q0, "union", tol);
+}
+
+/**
+ * Union of two simple polygons, or the first with the second cut away ("cut"). Segment k of the
+ * result came from the edges `srcs[k]`. A cut that would split the outline in two, leave a hole,
+ * or take everything away is an error, as is a union of shapes that are apart.
+ */
+export function combineRings(p0: Ring, q0: Ring, op: "union" | "cut", tol = 0.02): UnionResult | { error: string } {
   const rings = [p0, q0].map((r) => (signedArea(r.pts) < 0 ? reverseRing(r) : r));
   const nodes: V[] = [];
   const node = (p: V): number => {
@@ -439,12 +448,25 @@ export function unionRings(p0: Ring, q0: Ring, tol = 0.02): UnionResult | { erro
   }
   const has = [new Set<string>(), new Set<string>()];
   for (const pt of parts) has[pt.ring].add(`${pt.u},${pt.v}`);
-  const kept = parts.filter((pt) => {
-    const other = 1 - pt.ring;
-    if (has[other].has(`${pt.u},${pt.v}`)) return pt.ring === 0; // shared, same direction: keep once
-    if (has[other].has(`${pt.v},${pt.u}`)) return false; // shared and facing: the seam disappears
-    return !pointInPolygon(lerp(nodes[pt.u], nodes[pt.v], 0.5), rings[other].pts);
-  });
+  const kept =
+    op === "union"
+      ? parts.filter((pt) => {
+          const other = 1 - pt.ring;
+          if (has[other].has(`${pt.u},${pt.v}`)) return pt.ring === 0; // shared, same direction: keep once
+          if (has[other].has(`${pt.v},${pt.u}`)) return false; // shared and facing: the seam disappears
+          return !pointInPolygon(lerp(nodes[pt.u], nodes[pt.v], 0.5), rings[other].pts);
+        })
+      : parts
+          .filter((pt) => {
+            const other = 1 - pt.ring;
+            const same = has[other].has(`${pt.u},${pt.v}`);
+            const facing = has[other].has(`${pt.v},${pt.u}`);
+            // The first outline keeps what lies outside the cut (and edges the cut only rests against);
+            // the cut keeps what lies inside the first outline, walked the other way.
+            if (pt.ring === 0) return same ? false : facing ? true : !pointInPolygon(lerp(nodes[pt.u], nodes[pt.v], 0.5), rings[1].pts);
+            return same || facing ? false : pointInPolygon(lerp(nodes[pt.u], nodes[pt.v], 0.5), rings[0].pts);
+          })
+          .map((pt) => (pt.ring === 1 ? { ...pt, u: pt.v, v: pt.u } : pt));
   // Chain the kept parts into loops.
   const out = new Map<number, Part[]>();
   for (const pt of kept) out.set(pt.u, [...(out.get(pt.u) ?? []), pt]);
@@ -466,7 +488,11 @@ export function unionRings(p0: Ring, q0: Ring, tol = 0.02): UnionResult | { erro
     loops.push({ pts, srcs });
   }
   const outer = loops.filter((l) => signedArea(l.pts) > 0);
-  if (outer.length !== 1) return { error: outer.length ? "The outlines do not overlap or touch." : "The outlines could not be joined cleanly." };
+  if (op === "cut") {
+    if (!outer.length) return { error: "That would cut the whole piece away." };
+    if (outer.length > 1) return { error: "That cut would split the piece in two. Draw it so the leather still joins up." };
+    if (loops.length > 1) return { error: "That would leave a hole inside the piece. Start the cut on the piece's edge, or punch a hole instead." };
+  } else if (outer.length !== 1) return { error: outer.length ? "The outlines do not overlap or touch." : "The outlines could not be joined cleanly." };
   const res = outer[0];
   // Drop points where the outline runs straight on: two collinear segments become one.
   for (let i = 0; i < res.pts.length && res.pts.length > 3; ) {
@@ -476,7 +502,12 @@ export function unionRings(p0: Ring, q0: Ring, tol = 0.02): UnionResult | { erro
     const b = sub(res.pts[(i + 1) % n], res.pts[i]);
     const la = Math.hypot(a.x, a.y);
     const lb = Math.hypot(b.x, b.y);
-    if (la > tol && lb > tol && !(Math.abs(cross(a, b)) <= 1e-7 * la * lb && a.x * b.x + a.y * b.y > 0)) {
+    // A corner one outline already had between two of its own edges stays, even when straight:
+    // the stitching, a fold or an edge finish may change there.
+    const own = (l: [number, number][]) => (l.every((x) => x[0] === l[0][0]) ? l[0][0] : -1);
+    const ra = own(res.srcs[prev]);
+    const keep = ra >= 0 && ra === own(res.srcs[i]) && !res.srcs[prev].some((x) => res.srcs[i].some((y) => y[1] === x[1]));
+    if (keep || (la > tol && lb > tol && !(Math.abs(cross(a, b)) <= 1e-7 * la * lb && a.x * b.x + a.y * b.y > 0))) {
       i++;
       continue;
     }

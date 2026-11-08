@@ -11,7 +11,7 @@ import { h } from "./dom";
 import { icon } from "./icons";
 import { layout, setLayout } from "./layout";
 import { initMarking } from "./marking";
-import { closeMenu, initMenus, menuAnchor, menuOpen, openMenu, type Entry, type MenuItem } from "./menus";
+import { closeMenu, initMenus, menuAnchor, menuOpen, openMenu, type Entry, type MenuItem, type Pinnable } from "./menus";
 import { prefs, setTheme, unzoom, type Theme } from "./prefs";
 import { initSearch, showSearch } from "./search";
 import { initTimeline, renderTimeline } from "./timeline";
@@ -39,6 +39,8 @@ function cmdButton(c: Command, kind: Kind, scope: Scope, opts: { text?: boolean 
   const words = kind === "simple" ? c.simpleLabel ?? label(c) : label(c);
   const b = h("button", { class: `rb rb-${kind}`, type: "button", "aria-label": c.name }, icon(c.icon, SIZE[kind]), text ? h("span", { class: `rb-label${kind === "qa" || kind === "nav" ? " opt-label" : ""}` }, words) : null);
   if (kind === "simple") b.dataset.simple = "1";
+  // For the right-click menu (context.ts).
+  b.dataset.cmd = c.id;
   // Buttons never take focus, so Space and Enter stay with the keyboard shortcuts.
   b.addEventListener("mousedown", (e) => e.preventDefault());
   b.addEventListener("click", () => {
@@ -169,7 +171,10 @@ const MENUBAR: { label: string; full: boolean; items(): MenuItem[] }[] = [
     full: true,
     items: () =>
       withRest("view", [
-        ...ids("show3d", "showboth", "showpattern", "-", "fit", "home", "zoomin", "zoomout", "orbit", "pan"),
+        ...ids("show3d", "showboth", "showpattern"),
+        sub("Panels", "panelright", () => ids("librarypanel", "browserpanel", "-", "mergepanels", "panelstop", "collapsepanels", "-", "resetpanels"), "Show, merge, move or collapse the Library and Browser panels."),
+        "-",
+        ...ids("fit", "home", "zoomin", "zoomout", "orbit", "pan"),
         sub("3D views", "views", () => ids("home", "front", "side", "top", "back"), "Look at the 3D piece from one side."),
         "-",
         ...ids("snap", "smartsnap", "grid", "units", "-"),
@@ -245,7 +250,7 @@ function drawButton(): HTMLButtonElement {
   b.addEventListener("mousedown", (e) => e.preventDefault());
   b.addEventListener("click", () => {
     hideTip();
-    openMenu(b, ids("rect", "roundrect", "circle", "polygon", "-", "mirrorhalf"));
+    openMenu(b, ids("rect", "roundrect", "circle", "polygon", "-", "mirrorhalf", "roundgusset", "-", "addtopiece"));
   });
   return b;
 }
@@ -327,6 +332,8 @@ function buildTabs(): void {
   $("ws-switch").replaceChildren(sw);
   const subs = SUBTABS[tab] ?? [{ label: ws.label, groups: [] }];
   if (subTab >= subs.length) subTab = 0;
+  // One tab only: its row would only repeat the workspace name, so the toolbar goes without it.
+  document.querySelector(".ribbon")?.classList.toggle("one-tab", subs.length < 2);
   $("ribbon-tabs").replaceChildren(
     ...subs.map((s, i) => {
       const b = h("button", { type: "button", class: `rtab${i === subTab ? " active" : ""}` }, s.label);
@@ -399,6 +406,17 @@ function groupMenu(cmds: Command[]): MenuItem[] {
   );
 }
 
+/** Whether a command shows on the toolbar now, and the switch that pins it on or off (for the
+ * right-click menu of a toolbar button). Null when it is not in the current workspace. */
+export function toolbarPin(c: Command): Pinnable | null {
+  for (const [, cmds] of groupsOf(tab)) {
+    if (!cmds.includes(c)) continue;
+    const row = groupMenu(cmds).find((i): i is Pinnable => typeof i === "object" && "cmd" in i && i.cmd === c);
+    return row ?? null;
+  }
+  return null;
+}
+
 function buildPanel(): void {
   for (const list of [bound, fields] as { scope: Scope }[][]) for (let i = list.length - 1; i >= 0; i--) if (list[i].scope === "panel") list.splice(i, 1);
   const panel = $("ribbon-panel");
@@ -431,7 +449,15 @@ function buildWindows(): void {
     max.dataset.only = only;
     max.addEventListener("mousedown", (e) => e.preventDefault());
     max.addEventListener("click", () => setLayout(layout() === "both" ? only : "both"));
-    $(id).replaceChildren(h("span", { class: "win-title" }, title), h("span", { class: "win-sub" }, sub), h("span", { class: "spacer" }), max);
+    // Close this window; the other one takes the space. Closing the 3D window also pauses the
+    // simulation so it stops using the computer. F3 (or Show both) brings it back.
+    const close = h("button", { type: "button", class: "win-btn win-close", title: only === "3d" ? "Close the 3D window (F3 brings it back)" : "Close the pattern window (F3 brings it back)" }, h("span", { class: "win-x" }, "×"));
+    close.addEventListener("mousedown", (e) => e.preventDefault());
+    close.addEventListener("click", () => {
+      if (only === "3d") sim3d.running = false;
+      setLayout(only === "3d" ? "pattern" : "3d");
+    });
+    $(id).replaceChildren(h("span", { class: "win-title" }, title), h("span", { class: "win-sub" }, sub), h("span", { class: "spacer" }), max, close);
     return max;
   };
   maxButtons = [

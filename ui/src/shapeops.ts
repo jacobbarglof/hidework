@@ -346,7 +346,8 @@ export function setEdgeLength(pc: Piece, i: number, len: number): boolean {
   }
   const along = (p: V) => (p.x - a.x) * u.x + (p.y - a.y) * u.y;
   const end = along(b);
-  const moved = pc.vertices.map((v) => along(v) >= end - 1e-6);
+  // Everything on the far half moves, so rounded corners near the far end go with it.
+  const moved = pc.vertices.map((v) => along(v) > end / 2 + 1e-6);
   pc.vertices = pc.vertices.map((v, j) => (moved[j] ? vadd(v, d) : v));
   pc.edges = pc.edges.map((ed, j) => {
     if (ed.type !== "cubic") return ed;

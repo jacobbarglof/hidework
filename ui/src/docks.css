@@ -1,0 +1,382 @@
+/* Dockable panels (docks.ts): the work area is [left dock] [top dock over the windows] [right
+   dock], plus a layer for floating panels. Each panel is a slim header over its body. Sizes are
+   at 100% and zoom with --ui-scale like the rest of the chrome. */
+
+.workspace {
+  position: relative;
+}
+
+.center {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.windows {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.dock {
+  position: relative;
+}
+
+.dock.empty {
+  display: none;
+}
+
+.dock.sized {
+  max-width: none;
+}
+
+.dock.top {
+  flex: none;
+  height: 210px;
+  flex-direction: row;
+  border-bottom: 1px solid var(--edge);
+}
+
+.dock.top.empty,
+.dock.top:not(:has(.panel:not(.closed))) {
+  display: none;
+}
+
+/* ---------- a panel: header and body ---------- */
+
+.panel {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--dock);
+}
+
+.panel.closed {
+  display: none;
+}
+
+.panel.collapsed {
+  flex: none !important;
+}
+
+.panel.collapsed > .panel-body {
+  display: none;
+}
+
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 2px 0 5px;
+  background: var(--dock-lo);
+  border-bottom: 1px solid var(--edge);
+  cursor: grab;
+  touch-action: none;
+}
+
+.ph-grip {
+  display: flex;
+  color: var(--text-faint);
+  opacity: 0.7;
+}
+
+.panel-head:hover .ph-grip {
+  color: var(--gold);
+  opacity: 1;
+}
+
+.ph-title {
+  font-family: var(--caps);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+
+.ph-btn {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 18px;
+  padding: 0;
+  font-family: var(--serif);
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-soft);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.ph-btn:hover,
+.ph-btn.menu-open {
+  color: var(--gold-hi);
+  border-color: var(--line);
+  background: rgba(201, 162, 74, 0.13);
+}
+
+/* ---------- collapsed docks: a thin strip with the panel names up the side ---------- */
+
+.dock.strip {
+  width: 24px !important;
+  min-width: 24px;
+  max-width: 24px;
+}
+
+.dock.strip .panel-head {
+  writing-mode: vertical-rl;
+  flex-direction: row;
+  height: auto;
+  width: 100%;
+  padding: 6px 0;
+  gap: 8px;
+  border-bottom: 1px solid var(--edge);
+  cursor: pointer;
+}
+
+.dock.strip .panel-head:hover {
+  background: rgba(201, 162, 74, 0.12);
+}
+
+.dock.strip .panel-head:hover .ph-title {
+  color: var(--gold-hi);
+}
+
+.dock.strip .ph-grip,
+.dock.strip .ph-menu,
+.dock.strip .spacer {
+  display: none;
+}
+
+.dock.strip .ph-btn {
+  writing-mode: horizontal-tb;
+  width: 18px;
+}
+
+/* ---------- two panels in one dock ---------- */
+
+.dock-sash {
+  flex: none;
+  height: 4px;
+  cursor: row-resize;
+  background: var(--edge);
+}
+
+.dock-sash.across {
+  width: 4px;
+  height: auto;
+  cursor: col-resize;
+}
+
+.dock-sash:hover {
+  background: var(--gold);
+}
+
+/* ---------- resizing a dock by its inner edge ---------- */
+
+.dock-edge {
+  position: absolute;
+  z-index: 6;
+  touch-action: none;
+}
+
+.dock-edge.left {
+  top: 0;
+  bottom: 0;
+  right: -3px;
+  width: 6px;
+  cursor: col-resize;
+}
+
+.dock-edge.right {
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 6px;
+  cursor: col-resize;
+}
+
+.dock-edge.top {
+  left: 0;
+  right: 0;
+  bottom: -3px;
+  height: 6px;
+  cursor: row-resize;
+}
+
+.dock-edge:hover,
+.dock.resizing .dock-edge {
+  background: var(--gold);
+  opacity: 0.7;
+}
+
+.dock.strip .dock-edge,
+.dock.top:not(:has(.panel:not(.collapsed):not(.closed))) .dock-edge {
+  display: none;
+}
+
+/* The pieces list takes only the room it needs (up to 40%); the properties get the rest. */
+.panel-body > .browser {
+  flex: 0 1 auto;
+  max-height: 40%;
+  min-height: 96px;
+}
+
+/* ---------- the top dock: panels side by side, contents laid out wide ---------- */
+
+.dock.top .panel {
+  border-right: 1px solid var(--edge);
+}
+
+.dock.top .panel:last-of-type {
+  border-right: none;
+}
+
+.dock.top .panel.collapsed {
+  flex: 0 0 auto !important;
+  min-width: 140px;
+}
+
+.dock.top .panel-body {
+  flex-direction: row;
+}
+
+.dock.top .browser {
+  flex: 0 0 min(36%, 280px);
+  min-height: 0;
+  max-height: none;
+  border-bottom: none;
+  border-right: 3px double var(--line);
+}
+
+.dock.top .property-editor {
+  flex: 1;
+  column-width: 220px;
+  column-gap: 16px;
+  column-fill: auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.dock.top .property-editor .field,
+.dock.top .property-editor .section-head,
+.dock.top .property-editor .metric {
+  break-inside: avoid;
+}
+
+.dock.top .property-editor .section-head {
+  break-after: avoid;
+}
+
+.dock.top .steps {
+  flex: 0 0 260px;
+  max-height: none;
+  border-bottom: none;
+  border-right: 3px double var(--line);
+}
+
+.dock.top .lib-sec-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 3px 6px;
+}
+
+/* All collapsed at the top: one slim row of headers. */
+.dock.top:not(:has(.panel:not(.collapsed):not(.closed))) {
+  height: auto !important;
+}
+
+/* ---------- floating panels ---------- */
+
+.dock-float {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 8;
+}
+
+.panel.float {
+  position: absolute;
+  pointer-events: auto;
+  zoom: var(--ui-scale, 1);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  resize: both;
+  min-width: 200px;
+  min-height: 26px;
+}
+
+.panel.float.collapsed {
+  resize: none;
+}
+
+/* ---------- dragging a panel ---------- */
+
+.dock-ghost {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  border: 2px dashed var(--gold);
+  border-radius: 4px;
+  background: rgba(201, 162, 74, 0.1);
+}
+
+.dock-ghost.docked {
+  border-style: solid;
+  background: rgba(201, 162, 74, 0.2);
+}
+
+body.dock-dragging,
+body.dock-dragging * {
+  cursor: grabbing !important;
+}
+
+/* ---------- Simple mode: fixed panels, no headers or handles ---------- */
+
+[data-mode="simple"] .panel-head,
+[data-mode="simple"] .dock-edge,
+[data-mode="simple"] .dock-sash {
+  display: none;
+}
+
+/* ---------- leaner chrome (All tools) ---------- */
+
+/* A workspace with one toolbar tab needs no row of tabs. */
+.ribbon.one-tab .ribbon-tabs {
+  display: none;
+}
+
+.ws-btn {
+  width: 158px;
+}
+
+/* Right-click menus in Simple mode: big rows. */
+.menu.dense.big .mi {
+  height: 38px;
+  font-size: 15.5px;
+}
+
+.menu.dense.big .menu-head {
+  font-size: 12px;
+}

@@ -50,6 +50,59 @@
   color: #7a1f1a;
 }
 
+.draw-prompt .dp-modewrap {
+  margin-top: 6px;
+  pointer-events: auto;
+}
+
+.draw-prompt .dp-modes {
+  display: inline-flex;
+  border: 1.5px solid #7a1f1a;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.draw-prompt .dp-mode {
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 2px 10px;
+  border: 0;
+  border-left: 1px solid rgba(122, 31, 26, 0.45);
+  background: transparent;
+  color: #2b1d0e;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.draw-prompt .dp-mode:first-child {
+  border-left: 0;
+}
+
+.draw-prompt .dp-mode:hover {
+  background: rgba(122, 31, 26, 0.1);
+}
+
+.draw-prompt .dp-mode.on {
+  background: #7a1f1a;
+  color: #fff8e6;
+}
+
+.draw-prompt .dp-modehint {
+  font-size: 13px;
+  color: #5a4630;
+  margin-top: 2px;
+}
+
+.draw-prompt.big .dp-mode {
+  font-size: 17px;
+  padding: 4px 14px;
+}
+
+.draw-prompt.big .dp-modehint {
+  font-size: 15px;
+}
+
 .draw-prompt.big .dp-step {
   font-size: 14px;
 }

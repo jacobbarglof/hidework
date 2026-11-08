@@ -4,7 +4,7 @@ import { computedPiece, edit, isMulti, notify, piece, placing, selectPieces, sel
 import { canvasPng } from "./dom";
 import { snap as grid } from "./editing";
 import { dist, edgePoints, insertVertex, midpoint, polygonTouchesBox, toDesign } from "./ops";
-import { snapStep } from "./units";
+import { fmtLen, snapStep } from "./units";
 import { cancelShape, drawDouble, drawDown, drawing, drawMove, drawUp, fmt, initDraw, paintDraw } from "./drawtools";
 import { initEdgeBox, place as placeEdgeBox } from "./edgebox";
 import { simple } from "./prefs";
@@ -609,7 +609,7 @@ function drawPiece(pc: Piece, cp: ComputedPiece, selected: boolean): void {
       const p = toScreen(addV(first[0], off));
       ctx.fillStyle = sel ? OXBLOOD : INK;
       ctx.font = "italic 13px 'EB Garamond', serif";
-      ctx.fillText(`fold  +${f.shiftMm.toFixed(1)} mm`, p.x + 8, p.y - 5);
+      ctx.fillText(`fold  +${fmtLen(f.shiftMm, state.project.units)}`, p.x + 8, p.y - 5);
     }
   }
   // Skive zones.
