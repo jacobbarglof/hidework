@@ -205,7 +205,15 @@ fn half_ellipse(a: f64, b: f64) -> f64 {
 /// An arch in the plane spanned by `side` (half-span direction) and z: up from the start tab,
 /// over, and down the end tab, sized so its length is `len`.
 fn arch(center: P3, side: P3, half: f64, top: f64, tab: f64, len: f64) -> Vec<P3> {
-    let arc_len = (len - 2.0 * tab).max(half * 2.2);
+    arch_flared(center, side, half, 0.0, top, tab, len)
+}
+
+/// An arch whose arc starts `flare` further out than its tabs (to clear something at the top,
+/// such as a flap's edges).
+fn arch_flared(center: P3, side: P3, half: f64, flare: f64, top: f64, tab: f64, len: f64) -> Vec<P3> {
+    let tab_half = half;
+    let half = half + flare;
+    let arc_len = (len - 2.0 * tab - 2.0 * flare).max(half * 2.2);
     let (mut lo, mut hi) = (1.0, 5000.0);
     for _ in 0..60 {
         let mid = (lo + hi) / 2.0;
@@ -218,11 +226,17 @@ fn arch(center: P3, side: P3, half: f64, top: f64, tab: f64, len: f64) -> Vec<P3
     let b = (lo + hi) / 2.0;
     let base = [center[0], center[1], top];
     let at = |t: f64| add(base, add(mul(side, half * t.cos()), [0.0, 0.0, b * t.sin()]));
-    let mut pts = vec![add(add(base, mul(side, half)), [0.0, 0.0, -tab])];
+    let mut pts = vec![add(add(base, mul(side, tab_half)), [0.0, 0.0, -tab])];
+    if flare > 0.0 {
+        pts.push(add(base, mul(side, tab_half)));
+    }
     for k in 0..=48 {
         pts.push(at(std::f64::consts::PI * k as f64 / 48.0));
     }
-    pts.push(add(add(base, mul(side, -half)), [0.0, 0.0, -tab]));
+    if flare > 0.0 {
+        pts.push(add(base, mul(side, -tab_half)));
+    }
+    pts.push(add(add(base, mul(side, -tab_half)), [0.0, 0.0, -tab]));
     pts
 }
 
@@ -288,9 +302,12 @@ pub fn frame(project: &Project, piece: &Piece, cp: &ComputedPiece) -> Frame {
             Frame { kind: Kind::Path { spine: Spine::new(pts), cross: Some(zn), normal: None, along_y: false, anchor_end: false }, center: foot, bounds: b }
         }
         Face::BackFlap => {
-            let gap = l + t + 1.5;
+            // Up the back, over the top and down the front, a layer's clearance outside the
+            // gusset and front: their cut edges stand a seam margin proud of the form.
+            let gap = l + m + t + 1.5;
+            let top = h + m + gap;
             let ext = h * 2.0;
-            let pts = vec![[0.0, -d / 2.0 - gap, h - ext], [0.0, -d / 2.0 - gap, h + l], [0.0, d / 2.0 + l, h + l], [0.0, d / 2.0 + l, -m]];
+            let pts = vec![[0.0, -d / 2.0 - gap, top - ext], [0.0, -d / 2.0 - gap, top], [0.0, d / 2.0 + l, top], [0.0, d / 2.0 + l, -m]];
             Frame { kind: Kind::Path { spine: Spine::new(pts), cross: Some(xn), normal: None, along_y: true, anchor_end: true }, center, bounds: b }
         }
         Face::HandleFront | Face::HandleBack => {
@@ -307,7 +324,10 @@ pub fn frame(project: &Project, piece: &Piece, cp: &ComputedPiece) -> Frame {
             let lay = if l != 0.0 { l } else { t + 0.6 };
             let half = if place.span_mm > 0.0 { place.span_mm / 2.0 } else { w / 2.0 + lay };
             let tab = if place.tab_mm > 0.0 { place.tab_mm } else { 40.0 };
-            let pts = arch([0.0, 0.0, 0.0], xn, half, h, tab, b.width());
+            // Under a flap, the strap steps out past the flap's edges before rising.
+            let flap = project.pieces.iter().any(|q| q.place.as_ref().is_some_and(|p| p.face == Face::BackFlap));
+            let flare = if flap && place.span_mm <= 0.0 { m + t + 2.0 } else { 0.0 };
+            let pts = arch_flared([0.0, 0.0, 0.0], xn, half, flare, h, tab, b.width());
             Frame { kind: Kind::Path { spine: Spine::new(pts), cross: Some(yn), normal: None, along_y: false, anchor_end: false }, center, bounds: b }
         }
     }

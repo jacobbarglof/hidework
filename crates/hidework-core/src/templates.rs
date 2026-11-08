@@ -9,29 +9,25 @@ use serde::Serialize;
 pub struct TemplateInfo {
     pub id: &'static str,
     pub name: &'static str,
+    pub category: &'static str,
     pub description: &'static str,
 }
 
 pub fn list() -> Vec<TemplateInfo> {
-    vec![
-        TemplateInfo { id: "blank", name: "Blank project", description: "An empty sheet with one leather." },
-        TemplateInfo {
-            id: "card-wallet",
-            name: "Fold-over card wallet",
-            description: "One piece folded at the bottom to make a pocket, stitched up both sides.",
-        },
-        TemplateInfo { id: "belt", name: "Belt", description: "38 mm belt with a folded buckle end, tongue slot, rivets and five holes." },
-        TemplateInfo {
-            id: "journal-cover",
-            name: "A5 journal cover",
-            description: "One piece with two inside flaps that hold the notebook's covers.",
-        },
-        TemplateInfo { id: "tote", name: "Tote bag", description: "Front, back, one gusset, riveted handles, patch pocket, magnetic closure and feet. Arranged in 3D." },
-        TemplateInfo { id: "boxed-tote", name: "Boxed tote", description: "Five panels with square corners, handles and feet." },
-        TemplateInfo { id: "messenger", name: "Messenger bag", description: "Back panel with a flap, gusset, turn lock and a shoulder strap on Chicago screws." },
-        TemplateInfo { id: "bucket", name: "Bucket bag", description: "Oval bottom, one-piece body with a back seam, grommets for a drawstring, shoulder strap." },
-        TemplateInfo { id: "zip-pouch", name: "Zip pouch", description: "Two kidskin panels with a zipper across the top." },
-    ]
+    let t = |id, name, category, description| TemplateInfo { id, name, category, description };
+    let mut out = vec![
+        t("blank", "Blank project", "Start", "An empty sheet with one leather."),
+        t("card-wallet", "Fold-over card wallet", "Wallets", "One piece folded at the bottom to make a pocket, stitched up both sides."),
+        t("journal-cover", "A5 journal cover", "Covers", "One piece with two inside flaps that hold the notebook's covers."),
+        t("belt", "Belt", "Straps", "38 mm belt with a folded buckle end, tongue slot, rivets and five holes."),
+        t("tote", "Tote bag", "Bags", "Front, back, one gusset, riveted handles, patch pocket, magnetic closure and feet. Arranged in 3D."),
+        t("boxed-tote", "Boxed tote", "Bags", "Five panels with square corners, handles and feet."),
+        t("messenger", "Messenger bag", "Bags", "Back panel with a flap, gusset, turn lock and a shoulder strap on Chicago screws."),
+        t("bucket", "Bucket bag", "Bags", "Oval bottom, one-piece body with a back seam, grommets for a drawstring, shoulder strap."),
+        t("zip-pouch", "Zip pouch", "Bags", "Two kidskin panels with a zipper across the top."),
+    ];
+    out.extend(crate::library::entries().into_iter().map(|e| t(e.id, e.name, e.category, e.description)));
+    out
 }
 
 pub fn by_id(id: &str) -> Option<Project> {
@@ -47,7 +43,7 @@ pub fn by_id(id: &str) -> Option<Project> {
         "messenger" => style(BagStyle::Messenger),
         "bucket" => style(BagStyle::Bucket),
         "zip-pouch" => style(BagStyle::ZipPouch),
-        _ => None,
+        _ => crate::library::entries().into_iter().find(|e| e.id == id).map(|e| (e.build)()),
     }
 }
 
@@ -130,6 +126,7 @@ pub fn card_wallet() -> Project {
         notes: "Burnish the pocket mouth before stitching.".into(),
         hardware: vec![],
         marks: vec![],
+        tooling: vec![],
         place: None,
     });
     let edge = |e: usize| EdgeRef { piece_id: "body".into(), edges: vec![e] };
@@ -199,6 +196,7 @@ pub fn journal_cover() -> Project {
         notes: "Fold the flaps inward. Spine runs down the middle.".into(),
         hardware: vec![],
         marks: vec![],
+        tooling: vec![],
         place: None,
     });
     let e = |i: usize| EdgeRef { piece_id: "cover".into(), edges: vec![i] };

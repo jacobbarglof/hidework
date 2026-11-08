@@ -3,6 +3,7 @@
 // turns the view to a face, edge or corner when clicked.
 
 import * as THREE from "three";
+import { icon } from "./icons";
 
 /** Light grey-blue at the top to near white at the horizon, like Fusion's default canvas. */
 export function studioBackground(): THREE.Texture {
@@ -86,9 +87,11 @@ export function createViewCube(host: HTMLElement, turn: (dir: THREE.Vector3) => 
   wrap.appendChild(canvas);
   const homeBtn = document.createElement("button");
   homeBtn.className = "viewcube-home";
-  homeBtn.title = "Home view";
+  homeBtn.title = "Turn back to the usual view";
   homeBtn.type = "button";
-  homeBtn.textContent = "⌂";
+  homeBtn.setAttribute("aria-label", "Home view");
+  // The label shows in Simple mode, where no button is a bare picture.
+  homeBtn.append(icon("home", 16), Object.assign(document.createElement("span"), { className: "vc-label", textContent: "Home view" }));
   homeBtn.addEventListener("click", home);
   wrap.appendChild(homeBtn);
   host.appendChild(wrap);

@@ -1,0 +1,15 @@
+[package]
+name = "hidework-gpu"
+description = "GPU (wgpu compute) backend for the Hidework leather cloth simulator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+hidework-core = { path = "../hidework-core" }
+# GPU compute through DX12, Vulkan or Metal (MIT OR Apache-2.0).
+wgpu = "30"
+# Blocks on wgpu's adapter and device futures (MIT OR Apache-2.0).
+pollster = "1"
+# Plain-data casts for uploading arrays (Zlib OR Apache-2.0 OR MIT).
+bytemuck = { version = "1", features = ["derive"] }

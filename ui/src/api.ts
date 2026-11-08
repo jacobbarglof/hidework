@@ -17,9 +17,12 @@ import type {
   TemplateInfo,
   V,
 } from "./types";
+import type { Issue } from "./checktypes";
 
 export const api = {
   compute: (project: Project) => invoke<Computed>("compute_project", { project }),
+  /** The pattern checker (crates/hidework-core/src/check.rs). */
+  check: (project: Project) => invoke<Issue[]>("check_project", { project }),
   templates: () => invoke<TemplateInfo[]>("list_templates"),
   fromTemplate: (id: string) => invoke<Project>("from_template", { id }),
   save: (project: Project, path: string) => invoke<void>("save_project", { project, path }),

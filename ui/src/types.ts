@@ -81,6 +81,8 @@ export interface Piece {
   notes?: string;
   hardware?: HardwarePlacement[];
   marks?: Mark[];
+  /** Tooling on damp veg-tan: cuts and stamping (see ui/src/tooling.ts). */
+  tooling?: ToolingStroke[];
   place?: Place | null;
 }
 
@@ -102,6 +104,42 @@ export interface Mark {
   angleDeg?: number;
   text?: string;
   pattern?: string;
+}
+
+/** What a tooling stroke does with its points (model.rs StrokeKind). */
+export type StrokeKind = "cut" | "line" | "fill" | "stamp" | "letters";
+/** The tool that makes it (model.rs ToolKind). */
+export type ToolKind = "swivelKnife" | "beveler" | "backgrounder" | "pearShader" | "seeder" | "camouflage" | "veiner" | "muleFoot" | "basketweave" | "border" | "letter";
+/** One cut line, row of stamps, stamped area or word of lettering; points in piece design mm. */
+export interface ToolingStroke {
+  id: string;
+  kind: StrokeKind;
+  tool: ToolKind;
+  points: V[];
+  /** A smooth curve through the points (Catmull-Rom, i.e. a chain of cubic Beziers). */
+  smooth?: boolean;
+  closed?: boolean;
+  /** Stamp face (or cut) width; 0 = the tool's usual size. */
+  sizeMm?: number;
+  depthMm?: number;
+  /** Distance between impressions; 0 = usual. */
+  spacingMm?: number;
+  angleDeg?: number;
+  /** Line of stamps: +1 left of travel (the (-y, x) normal), -1 right, 0 on the line. */
+  side?: number;
+  text?: string;
+  /** Strokes from one ready-made design share a group and move together. */
+  group?: string;
+}
+export type Design = "border" | "basketweave" | "floral" | "corner" | "checkerboard" | "diamond" | "monogram";
+export interface DesignRequest {
+  design: Design;
+  at: V;
+  sizeMm?: number;
+  tool?: ToolKind | null;
+  insetMm?: number;
+  text?: string;
+  rect?: Rect | null;
 }
 
 export type Face = "flat" | "front" | "back" | "left" | "right" | "bottom" | "top" | "wrapSides" | "wrapAround" | "backFlap" | "handleFront" | "handleBack" | "strapSides";

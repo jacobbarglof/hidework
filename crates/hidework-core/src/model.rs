@@ -171,6 +171,9 @@ pub struct Piece {
     /// Decoration and surface work: stamps, tooling, embossing, engraving, paint, perforation.
     #[serde(default)]
     pub marks: Vec<Mark>,
+    /// Tooling on damp veg-tan: swivel-knife cuts and stamping (see `crate::tooling`).
+    #[serde(default)]
+    pub tooling: Vec<ToolingStroke>,
     /// Where the piece starts in 3D.
     #[serde(default)]
     pub place: Option<Place>,
@@ -227,6 +230,85 @@ pub struct Mark {
     pub text: String,
     #[serde(default)]
     pub pattern: String,
+}
+
+/// What a tooling stroke does with its points.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StrokeKind {
+    /// A swivel-knife cut along the points.
+    #[default]
+    Cut,
+    /// A stamp walked along the points every `spacing_mm` (beveling beside a cut, border stamping).
+    Line,
+    /// The closed region the points outline, filled with the stamp (basketweave, backgrounding,
+    /// seeding).
+    Fill,
+    /// One impression at each point.
+    Stamp,
+    /// `text` struck with alphabet stamps; the first letter is centred on the first point.
+    Letters,
+}
+
+/// The tool that makes a tooling stroke.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ToolKind {
+    #[default]
+    SwivelKnife,
+    Beveler,
+    Backgrounder,
+    PearShader,
+    Seeder,
+    Camouflage,
+    Veiner,
+    MuleFoot,
+    Basketweave,
+    Border,
+    Letter,
+}
+
+/// One cut line, row of stamps, stamped area or word of lettering on a piece. Points are piece
+/// design coordinates in millimetres (like holes and marks).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolingStroke {
+    pub id: String,
+    #[serde(default)]
+    pub kind: StrokeKind,
+    #[serde(default)]
+    pub tool: ToolKind,
+    #[serde(default)]
+    pub points: Vec<Vec2>,
+    /// A smooth curve through the points (a Catmull-Rom spline: a chain of cubic Beziers)
+    /// instead of straight segments.
+    #[serde(default)]
+    pub smooth: bool,
+    /// The last point joins back to the first (always true in effect for a fill).
+    #[serde(default)]
+    pub closed: bool,
+    /// Stamp face (or cut) width; 0 means the tool's usual size.
+    #[serde(default)]
+    pub size_mm: f64,
+    /// Depth of the cut or impression (for the 3D preview); 0 means the tool's usual depth.
+    #[serde(default)]
+    pub depth_mm: f64,
+    /// Centre-to-centre distance between impressions; 0 means the tool's usual spacing.
+    #[serde(default)]
+    pub spacing_mm: f64,
+    /// Extra turn of every impression (and of a fill's grid), degrees.
+    #[serde(default)]
+    pub angle_deg: f64,
+    /// For a line of stamps: +1 puts the stamps on the left of the direction of travel (the
+    /// `Vec2::left` normal), -1 on the right, 0 centred on the line.
+    #[serde(default)]
+    pub side: i32,
+    /// Letters to strike (for `StrokeKind::Letters`).
+    #[serde(default)]
+    pub text: String,
+    /// Strokes placed together by one ready-made design share a group id and move together.
+    #[serde(default)]
+    pub group: String,
 }
 
 fn one() -> u32 {

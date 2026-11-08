@@ -12,10 +12,12 @@ export type Sel =
   | { kind: "fold"; piece: string; id: string }
   | { kind: "hardware"; piece: string; id: string }
   | { kind: "mark"; piece: string; id: string }
+  /** A tooling stroke (and, when it has a group, the whole ready-made design it belongs to). */
+  | { kind: "tooling"; piece: string; id: string }
   | { kind: "join"; id: string }
   | { kind: "material"; id: string };
 
-export type Tool = "select" | "hole" | "fold" | "join" | "measure" | "rect" | "polygon" | "hardware" | "mark";
+export type Tool = "select" | "hole" | "fold" | "join" | "measure" | "rect" | "polygon" | "hardware" | "mark" | "tooling";
 export type Mode = "pattern";
 
 export const state = {
@@ -36,6 +38,10 @@ export const state = {
 
 const undoStack: string[] = [];
 const redoStack: string[] = [];
+
+/** A short name for each undo and redo step, kept in step with the stacks, for the history
+ * timeline. `label` names a new step; the timeline sets it. */
+export const history = { undo: [] as string[], redo: [] as string[], label: (): string => "Change" };
 const listeners = new Set<() => void>();
 
 /** Hardware picked in the library, placed by the next Punch click. */
@@ -64,8 +70,13 @@ export function setStatus(text: string): void {
 /** Record the current project for undo. Call once before a change (or a drag). */
 export function snapshot(): void {
   undoStack.push(JSON.stringify(state.project));
-  if (undoStack.length > 300) undoStack.shift();
+  history.undo.push(history.label());
+  if (undoStack.length > 300) {
+    undoStack.shift();
+    history.undo.shift();
+  }
   redoStack.length = 0;
+  history.redo.length = 0;
   state.dirty = true;
 }
 
@@ -89,6 +100,7 @@ export function undo(): void {
   const prev = undoStack.pop();
   if (!prev) return;
   redoStack.push(JSON.stringify(state.project));
+  history.redo.push(history.undo.pop() ?? "Change");
   state.project = JSON.parse(prev);
   fixSelection();
   changed();
@@ -98,6 +110,7 @@ export function redo(): void {
   const next = redoStack.pop();
   if (!next) return;
   undoStack.push(JSON.stringify(state.project));
+  history.undo.push(history.redo.pop() ?? "Change");
   state.project = JSON.parse(next);
   fixSelection();
   changed();
@@ -112,15 +125,24 @@ export function setProject(p: Project, path: string | null): void {
   state.filePath = path;
   state.dirty = false;
   state.sel = { kind: "none" };
+  multi.sel = null;
+  multi.ids = [];
   state.joinPending = null;
   undoStack.length = 0;
   redoStack.length = 0;
+  history.undo.length = 0;
+  history.redo.length = 0;
   changed();
 }
 
 /** Drop a selection that no longer points at anything (after undo or delete). */
 export function fixSelection(): void {
   const s = state.sel;
+  if (multi.sel === s && multi.ids.length) {
+    // Keep the pieces of a multi-selection that still exist.
+    selectPieces(multi.ids.filter((id) => !!piece(id)));
+    return;
+  }
   if (s.kind === "none") return;
   if (s.kind === "join") {
     if (!state.project.joins.some((j) => j.id === s.id)) state.sel = { kind: "none" };
@@ -137,6 +159,7 @@ export function fixSelection(): void {
   else if (s.kind === "fold" && !p.folds.some((f) => f.id === s.id)) state.sel = { kind: "piece", piece: p.id };
   else if (s.kind === "hardware" && !(p.hardware ?? []).some((x) => x.id === s.id)) state.sel = { kind: "piece", piece: p.id };
   else if (s.kind === "mark" && !(p.marks ?? []).some((x) => x.id === s.id)) state.sel = { kind: "piece", piece: p.id };
+  else if (s.kind === "tooling" && !(p.tooling ?? []).some((x) => x.id === s.id)) state.sel = { kind: "piece", piece: p.id };
 }
 
 let inflight = false;
@@ -193,6 +216,34 @@ export function computedPiece(id: string): ComputedPiece | undefined {
 export function selectedPieceId(): string | null {
   const s = state.sel;
   return s.kind === "none" || s.kind === "join" || s.kind === "material" ? null : s.piece;
+}
+
+/**
+ * Multi-selection: the pieces picked with Shift/Ctrl+click, a drag box or Select all. `state.sel`
+ * stays a plain piece selection of the first id, so single-selection code keeps working; the
+ * extra ids count only while `state.sel` is still the very object `selectPieces` made. Any code
+ * that selects something else (a new `state.sel` object) therefore drops the multi-selection.
+ */
+export const multi = { sel: null as Sel | null, ids: [] as string[] };
+
+/** Select these pieces (in order; the first is the primary one). An empty list selects nothing. */
+export function selectPieces(ids: string[]): void {
+  const uniq = [...new Set(ids)].filter((id) => !!piece(id));
+  state.sel = uniq.length ? { kind: "piece", piece: uniq[0] } : { kind: "none" };
+  multi.sel = uniq.length > 1 ? state.sel : null;
+  multi.ids = uniq.length > 1 ? uniq : [];
+}
+
+/** True when more than one piece is selected. */
+export function isMulti(): boolean {
+  return multi.sel === state.sel && state.sel.kind === "piece" && multi.ids.length > 1;
+}
+
+/** Ids of all selected pieces: the multi-selection, or the one piece whose part is selected. */
+export function selectedPieceIds(): string[] {
+  if (isMulti()) return multi.ids.slice();
+  const id = selectedPieceId();
+  return id ? [id] : [];
 }
 
 export function uid(prefix: string): string {

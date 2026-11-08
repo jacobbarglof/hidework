@@ -1,6 +1,8 @@
 //! Desktop shell: exposes the core to the interface as Tauri commands, and runs the local control
 //! channel that the MCP bridge talks to.
 
+mod cmd_hide;
+mod cmd_import;
 mod control;
 
 use hidework_core::bags::{self, BagParams, BagStyle};
@@ -12,6 +14,7 @@ use hidework_core::generators::{self, StrapParams};
 use hidework_core::geom::Vec2;
 use hidework_core::model::{Piece, Project, FORMAT};
 use hidework_core::pdf::{self, PageSize};
+use hidework_core::print::PrintLayout;
 use hidework_core::physics::{self, MaterialStats, Preset};
 use hidework_core::sim::{ObjectSpec, Prop, Sim, SimInfo, SimMetrics, SimSpec};
 use hidework_core::templates::{self, TemplateInfo};
@@ -25,6 +28,18 @@ type Res<T> = Result<T, String>;
 #[tauri::command]
 fn compute_project(project: Project) -> ComputedProject {
     compute(&project)
+}
+
+/// The pattern checker: plain-English problems, warnings and tips, most with a one-click fix.
+#[tauri::command]
+fn check_project(project: Project) -> Vec<hidework_core::check::Issue> {
+    hidework_core::check::check(&project)
+}
+
+/// A ready-made tooling design (border, basketweave, floral, corner, monogram...) for a piece.
+#[tauri::command]
+fn tooling_design(piece: hidework_core::model::Piece, request: hidework_core::tooling::DesignRequest, id: String) -> Vec<hidework_core::model::ToolingStroke> {
+    hidework_core::tooling::design(&piece, &request, &id)
 }
 
 #[tauri::command]
@@ -53,9 +68,10 @@ fn load_project(path: String) -> Res<Project> {
     Ok(project)
 }
 
-fn render_pdf(project: &Project, page: PageSize) -> (Vec<u8>, usize) {
+/// `layout` is optional so older callers keep working; it defaults to the fewest pages.
+fn render_pdf(project: &Project, page: PageSize, layout: Option<PrintLayout>) -> (Vec<u8>, usize) {
     let c = compute(project);
-    pdf::to_pdf(&sheet::build_sheet(project, &c), page)
+    pdf::print(project, &c, page, layout.unwrap_or_default())
 }
 
 fn write(path: &str, bytes: &[u8]) -> Res<()> {
@@ -69,8 +85,8 @@ fn export_svg(project: Project, path: String) -> Res<()> {
 }
 
 #[tauri::command]
-fn export_pdf(project: Project, path: String, page: PageSize) -> Res<usize> {
-    let (bytes, pages) = render_pdf(&project, page);
+fn export_pdf(project: Project, path: String, page: PageSize, layout: Option<PrintLayout>) -> Res<usize> {
+    let (bytes, pages) = render_pdf(&project, page, layout);
     write(&path, &bytes)?;
     Ok(pages)
 }
@@ -94,8 +110,8 @@ fn export_stl(project: Project, path: String, options: FabOptions) -> Res<usize>
 
 /// Write the template to a temporary PDF and open it in the system viewer for printing.
 #[tauri::command]
-fn print_pdf(project: Project, page: PageSize) -> Res<usize> {
-    let (bytes, pages) = render_pdf(&project, page);
+fn print_pdf(project: Project, page: PageSize, layout: Option<PrintLayout>) -> Res<usize> {
+    let (bytes, pages) = render_pdf(&project, page, layout);
     let safe: String = project.name.chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect();
     let path: PathBuf = std::env::temp_dir().join(format!("hidework-{safe}.pdf"));
     std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
@@ -104,10 +120,8 @@ fn print_pdf(project: Project, page: PageSize) -> Res<usize> {
 }
 
 #[tauri::command]
-fn page_count(project: Project, page: PageSize) -> usize {
-    let c = compute(&project);
-    let t = pdf::tiling(&sheet::build_sheet(&project, &c), page);
-    t.cols * t.rows
+fn page_count(project: Project, page: PageSize, layout: Option<PrintLayout>) -> usize {
+    pdf::page_count(&project, &compute(&project), page, layout.unwrap_or_default())
 }
 
 #[tauri::command]
@@ -244,13 +258,32 @@ fn f32_bytes(v: &[f32]) -> tauri::ipc::Response {
 }
 
 #[tauri::command]
-async fn sim_start(state: State<'_, Arc<SimState>>, project: Project, spec: SimSpec) -> Res<SimInfo> {
+async fn sim_start(state: State<'_, Arc<SimState>>, project: Project, spec: SimSpec, carry: Option<bool>) -> Res<SimInfo> {
     let st = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let sim = Sim::new(&project, spec)?;
+        // `carry`: the pattern was edited while the 3D model was up; start from the shape it is in.
+        let sim = {
+            let g = st.lock().map_err(|_| "lock")?;
+            match (carry.unwrap_or(false), g.as_ref()) {
+                (true, Some(old)) => Sim::carry_over(&project, spec, old)?,
+                _ => Sim::new(&project, spec)?,
+            }
+        };
         let info = sim.info.clone();
         *st.lock().map_err(|_| "lock")? = Some(sim);
         Ok(info)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Run the pattern in 3D for a few seconds on its own and report what went wrong (open seams,
+/// overloaded stitches, tangling, tipping). It never touches the live simulation. A coarser mesh
+/// than the live view keeps it quick; pattern faults show at any resolution.
+#[tauri::command]
+async fn sim_diagnose(project: Project, seconds: Option<f64>) -> Res<Vec<hidework_core::sim::SimIssue>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        hidework_core::sim::diagnose_project(&project, SimSpec { resolution: 300, ..SimSpec::default() }, seconds.unwrap_or(4.0))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -335,8 +368,8 @@ fn sim_remove(state: State<'_, Arc<SimState>>, id: String) -> Res<()> {
 }
 
 #[tauri::command]
-fn sim_drag(state: State<'_, Arc<SimState>>, vertex: Option<usize>, target: [f64; 3]) -> Res<()> {
-    with_sim(&state, |s| s.drag(vertex, target))
+fn sim_drag(state: State<'_, Arc<SimState>>, vertex: Option<usize>, target: [f64; 3], radius_mm: Option<f64>) -> Res<()> {
+    with_sim(&state, |s| s.drag(vertex, target, radius_mm.unwrap_or(12.0)))
 }
 
 #[tauri::command]
@@ -436,6 +469,16 @@ fn mcp_path() -> Option<String> {
     p.exists().then(|| p.to_string_lossy().into_owned())
 }
 
+/// The recovery file the interface autosaves to every minute (in the app's data folder), so
+/// "Pick up where you left off" works after a crash or a forgotten save. Saved and loaded with
+/// save_project and load_project.
+#[tauri::command]
+fn autosave_path(app: tauri::AppHandle) -> Option<String> {
+    let dir = app.path().app_data_dir().ok()?;
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join("recovery.hidework").to_string_lossy().into_owned())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let pending = Arc::new(control::Pending::default());
@@ -456,7 +499,9 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            tooling_design,
             compute_project,
+            check_project,
             list_templates,
             from_template,
             save_project,
@@ -486,8 +531,10 @@ pub fn run() {
             arrange_inverse,
             startup_file,
             mcp_path,
+            autosave_path,
             control_ready,
             sim_start,
+            sim_diagnose,
             sim_stop,
             sim_step,
             sim_utilisation,
@@ -501,6 +548,11 @@ pub fn run() {
             sim_reset,
             sim_nearest,
             save_png,
+            cmd_hide::hide_presets,
+            cmd_hide::nest_on_hide,
+            cmd_hide::cost_project,
+            cmd_import::import_pattern,
+            cmd_import::trace_pattern,
             control_reply
         ])
         .run(tauri::generate_context!())

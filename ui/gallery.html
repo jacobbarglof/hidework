@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hidework hardware gallery (dev only)</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #dfe5eb; font: 13px/1.3 system-ui, sans-serif; }
+      #view3d { position: absolute; inset: 0; }
+      #labels { position: absolute; inset: 0; pointer-events: none; }
+      #labels span { position: absolute; transform: translate(-50%, 0); color: #233; background: rgba(255,255,255,0.72); padding: 1px 5px; border-radius: 3px; white-space: nowrap; font-size: 12px; }
+      #stats { position: absolute; left: 8px; top: 8px; background: rgba(255,255,255,0.85); padding: 6px 9px; border-radius: 4px; color: #123; white-space: pre; font: 12px/1.35 ui-monospace, Consolas, monospace; }
+      .viewcube { display: none; }
+    </style>
+  </head>
+  <body>
+    <div id="view3d"></div>
+    <div id="labels"></div>
+    <div id="stats">loading</div>
+    <script type="module" src="/src/hardware/gallery.ts"></script>
+  </body>
+</html>

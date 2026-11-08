@@ -190,6 +190,7 @@ pub fn bag(params: &BagParams) -> Project {
     let mut p = crate::templates::blank();
     p.name = params.name.clone();
     p.materials = vec![Material { id: "body".into(), name: preset.name.into(), kind: preset.kind, thickness_mm: t, physics: Some(preset.physics.clone()), cost_per_sqft: None, color: None }];
+
     p.thread = Some(if crate::craft::stitch_info(params.stitch).lace { "lace-goat-3".into() } else { "poly-0.6".into() });
     p.thread_color = Some(params.thread_color.clone());
     let (w, h, d) = (params.width_mm.max(60.0), params.height_mm.max(40.0), params.depth_mm.max(2.0));
@@ -266,7 +267,9 @@ pub fn bag(params: &BagParams) -> Project {
             join(&mut p, ("right", &[1]), ("back", &[3]), params);
         }
         BagStyle::ZipPouch => {
-            for (id, name, face) in [("front", "Front", Face::Front), ("back", "Back", Face::Back)] {
+            // A soft, nearly flat pouch: it lies on the table, back on front, rather than standing
+            // on its edge to topple over.
+            for (id, name, face) in [("front", "Front", Face::Flat), ("back", "Back", Face::Flat)] {
                 let mut pc = panel_rounded_bottom(id, name, "body", w, h, r);
                 let se = sides_and_bottom(&pc);
                 stitch_edges(&mut pc, &se);
@@ -291,8 +294,11 @@ pub fn bag(params: &BagParams) -> Project {
             body.edges[0].crease = true;
             body.notes = "Close the back seam first, then sew in the bottom.".into();
             let bl = len + 2.0 * m;
-            body.hardware = (0..10)
-                .map(|k| HardwarePlacement { id: format!("grommet{k}"), kind: "grommet-10".into(), at: v(bl * (k as f64 + 0.5) / 10.0, 28.0), angle_deg: 0.0, size_mm: 0.0, label: String::new() })
+            // Twelve grommets, evenly round: none falls at the sides (a quarter and three
+            // quarters round), where the shoulder strap's screws go.
+            let n = 12;
+            body.hardware = (0..n)
+                .map(|k| HardwarePlacement { id: format!("grommet{k}"), kind: "grommet-10".into(), at: v(bl * (k as f64 + 0.5) / n as f64, 28.0), angle_deg: 0.0, size_mm: 0.0, label: String::new() })
                 .collect();
             add(&mut p, body, Face::WrapAround);
             join(&mut p, ("body", &[2]), ("bottom", &[0, 1, 2, 3]), params);
@@ -304,18 +310,24 @@ pub fn bag(params: &BagParams) -> Project {
     let handles = matches!(params.carry, Carry::Handles | Carry::Both) && params.style != BagStyle::ZipPouch;
     let shoulder = matches!(params.carry, Carry::Shoulder | Carry::Both) && params.style != BagStyle::ZipPouch;
     if handles {
+        // Handles are cut from heavier leather (or two layers glued) so they hold their arch:
+        // bending stiffness grows with thickness cubed.
+        let handle_t = (t * 1.6).clamp(3.2, 5.0).max(t);
+        p.materials.push(Material { id: "handle".into(), name: format!("{}, heavier for the handles", preset.name), kind: preset.kind, thickness_mm: handle_t, physics: Some(preset.physics.clone()), cost_per_sqft: None, color: None });
         let (hl, hw) = (params.handle_length_mm.max(150.0), params.handle_width_mm.max(10.0));
         for (id, name, face, onto) in [("handle1", "Handle (front)", Face::HandleFront, "front"), ("handle2", "Handle (back)", Face::HandleBack, "back")] {
             let mut pc = panel(id, name, "body", hl, hw);
             stitch_edges(&mut pc, &[0, 2]);
             pc.grain_deg = 0.0;
-            pc.notes = "Glue two layers flesh to flesh, or roll and stitch.".into();
+            pc.notes = "Cut from heavier leather, or glue two layers flesh to flesh.".into();
             let tab = 40.0;
             let mut place = default_place(face);
             place.span_mm = w * 0.42;
             place.tab_mm = tab;
             add(&mut p, pc, face);
-            p.pieces.last_mut().unwrap().place = Some(place);
+            let last = p.pieces.last_mut().unwrap();
+            last.place = Some(place);
+            last.material_id = "handle".into();
             let pts = [v(12.0, hw / 2.0), v(30.0, hw / 2.0), v(hl - 12.0, hw / 2.0), v(hl - 30.0, hw / 2.0)];
             let onto = if params.style == BagStyle::Messenger && onto == "back" { "back" } else { onto };
             fasten(&mut p, id, &pts, onto, "rivet-m", 0.0);
@@ -344,15 +356,16 @@ pub fn bag(params: &BagParams) -> Project {
 
     // Closure.
     if params.style == BagStyle::Messenger && params.closure != Closure::None {
-        let fd = if params.flap_mm > 0.0 { params.flap_mm } else { h * 0.7 };
-        let z = fh - fd + 28.0;
         let (catch, eye) = match params.closure {
             Closure::TurnLock => ("turnlock-catch", "turnlock-eyelet"),
             Closure::Snap => ("snap-24", "snap-24"),
             _ => ("magnet-18", "magnet-18"),
         };
-        put_at(&mut p, "front", [0.0, -fdp / 2.0, z], catch, 0.0, "closure-front");
-        put_at(&mut p, "back", [0.0, -fdp / 2.0 - t - 1.5, z], eye, 0.0, "closure-flap");
+        // 28 mm up from the flap's tip, and the catch on the front where the flap lands.
+        let at = v(w / 2.0, 28.0);
+        let world = frame_of(&frames(&p), "back").map([at.x, at.y, 0.0]);
+        piece_mut(&mut p, "back").hardware.push(HardwarePlacement { id: "closure-flap".into(), kind: eye.into(), at, angle_deg: 0.0, size_mm: 0.0, label: String::new() });
+        put_at(&mut p, "front", [0.0, -fdp / 2.0, world[2]], catch, 0.0, "closure-front");
     } else if params.closure != Closure::None && matches!(params.style, BagStyle::Tote | BagStyle::BoxedTote) {
         // A pair at the top centre, on the inside faces.
         let kind = match params.closure {
@@ -462,6 +475,20 @@ mod tests {
                 assert!(j.ok, "{style:?} seam {}: {}", j.id, j.message);
             }
             assert!(p.pieces.iter().all(|pc| pc.place.is_some()));
+        }
+    }
+
+    #[test]
+    fn bucket_strap_screws_clear_the_drawstring_grommets() {
+        let p = bag(&BagParams::style_defaults(BagStyle::Bucket));
+        let body = p.piece("body").unwrap();
+        let screws: Vec<Vec2> = body.hardware.iter().filter(|h| h.kind == "chicago-screw").map(|h| h.at).collect();
+        let grommets: Vec<Vec2> = body.hardware.iter().filter(|h| h.kind == "grommet-10").map(|h| h.at).collect();
+        assert_eq!(screws.len(), 4);
+        for s in &screws {
+            for g in &grommets {
+                assert!(s.dist(*g) >= 14.0, "screw {s:?} only {:.1} mm from grommet {g:?}", s.dist(*g));
+            }
         }
     }
 

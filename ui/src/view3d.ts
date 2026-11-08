@@ -13,9 +13,13 @@ import { generation, notify, setStatus, state, uid, version } from "./store";
 import { colorFor, finishFor, surfaces } from "./textures";
 import type { Prop, SimInfo, SimObject, SimStatus, Shape } from "./simtypes";
 import { createViewCube, groundGrid, studioBackground, type ViewCube } from "./scenery";
-import { hardwareMesh, markTextures, stitchMeshes, updateDecor, updateStitches, type Metal, type StitchMeshes } from "./fittings";
+import { markTextures, stitchMeshes, updateDecor, updateStitches, type Metal, type StitchMeshes } from "./fittings";
+import { HardwareLayer } from "./hardware/instances";
+import { edgeMaterial as rimMaterial, makeRim, writeRim } from "./hardware/edges";
 
-export type Tool3d = "orbit" | "move" | "pin" | "weight" | "object";
+/** "orbit" is the default: left-drag on the leather pulls it, on empty space orbits. "pan" makes
+ * left-drag pan everywhere (the navigation bar's Pan). */
+export type Tool3d = "orbit" | "pan" | "move" | "pin" | "weight" | "object";
 
 export const sim3d = {
   info: null as SimInfo | null,
@@ -81,7 +85,7 @@ let markerGroup = new THREE.Group();
 let utilisation: Float32Array | null = null;
 let stepping = false;
 let builtGeneration = -1;
-let dragging: { vertex: number; plane: THREE.Plane } | null = null;
+let dragging: { vertex: number; plane: THREE.Plane; radius: number } | null = null;
 
 const raycaster = new THREE.Raycaster();
 
@@ -105,8 +109,9 @@ export function initView3d(el: HTMLElement): void {
   camera.position.set(250, -350, 300);
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
-  // CLO style: right drag orbits, middle drag pans, wheel zooms; left is for tools.
-  controls.mouseButtons = { LEFT: null as unknown as THREE.MOUSE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
+  // Left drag on the leather grabs and pulls it; left drag on empty space, or right drag, orbits;
+  // middle drag pans; the wheel zooms.
+  controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
   sun = new THREE.DirectionalLight("#ffffff", 2.3);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
@@ -137,6 +142,7 @@ export function initView3d(el: HTMLElement): void {
   viewCube = createViewCube(el, (dir) => lookFrom(dir), () => viewPreset("iso"));
   const loop = () => {
     requestAnimationFrame(loop);
+    controls.mouseButtons.LEFT = sim3d.tool === "pan" ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
     controls.update();
     if (sim3d.running && !stepping && positions) void step();
     composer.render();
@@ -158,14 +164,18 @@ function resize(): void {
 // ---------- building the scene ----------
 
 /** (Re)start the simulation from the current pattern. */
-export async function rebuild(keepRunning = false): Promise<void> {
+export async function rebuild(keepRunning = false, carry = false): Promise<void> {
   if (sim3d.building) return;
+  // Carry the current 3D shape over only for an edit of the same project, never a new one.
+  carry = carry && !!sim3d.info && builtGeneration === generation;
   sim3d.building = true;
   // The pattern this build is made from; edits made while it runs leave it out of date.
   const startVersion = version;
   sim3d.error = "";
   const was = sim3d.running;
   sim3d.running = false;
+  // Let a frame already on its way finish, so its positions are not drawn on the new mesh.
+  while (stepping) await new Promise((r) => setTimeout(r, 5));
   // Keep the scene (objects, weights, pins) across a rebuild, like CLO keeps the avatar.
   const keep = builtGeneration === generation ? sim3d.status : null;
   if (!keep) {
@@ -182,6 +192,7 @@ export async function rebuild(keepRunning = false): Promise<void> {
     const info = await invoke<SimInfo>("sim_start", {
       project: state.project,
       spec: { foldAngleDeg: sim3d.foldAngle, props: sim3d.props, liftMm: sim3d.liftMm },
+      carry,
     });
     sim3d.info = info;
     sim3d.builtVersion = startVersion;
@@ -194,7 +205,8 @@ export async function rebuild(keepRunning = false): Promise<void> {
     }
     const buf = await invoke<ArrayBuffer>("sim_step", { frames: 0 });
     applyPositions(new Float32Array(buf));
-    frameView();
+    // An edit keeps the camera where the user put it.
+    if (!carry) frameView();
     sim3d.running = keepRunning && was;
     await refreshStatus();
   } catch (e) {
@@ -256,9 +268,8 @@ function build(info: SimInfo): void {
     });
     const rims: PieceMeshes["rims"] = [];
     for (const [finish, edges] of groups) {
-      const rimGeo = new THREE.BufferGeometry();
-      rimGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(edges.length * 6 * 3), 3));
-      const rim = new THREE.Mesh(rimGeo, edgeMaterial(finish, color, surf));
+      // Shaped by finish (rounded, beaded, folded, fibrous): hardware/edges.ts.
+      const rim = makeRim(info, edges, finish, edgeMaterial(finish, color, surf), [pi.indexStart, pi.indexStart + pi.indexCount], surf.tileMm);
       rim.castShadow = true;
       cloth.add(rim);
       rims.push({ mesh: rim, edges });
@@ -301,21 +312,9 @@ function offsetMaterial(base: THREE.Material, offset: number): THREE.Material {
   return m;
 }
 
-/** Material for a cut edge by its finish. */
+/** Material for a cut edge by its finish (hardware/edges.ts). */
 function edgeMaterial(finish: string, color: string, surf: ReturnType<typeof surfaces>): THREE.Material {
-  const c = new THREE.Color(color);
-  switch (finish) {
-    case "burnished":
-      return new THREE.MeshPhysicalMaterial({ color: c.clone().multiplyScalar(0.42), roughness: 0.28, clearcoat: 0.6, clearcoatRoughness: 0.35 });
-    case "painted":
-      return new THREE.MeshPhysicalMaterial({ color: c.clone().multiplyScalar(0.18), roughness: 0.35, clearcoat: 0.8, clearcoatRoughness: 0.25 });
-    case "turned":
-      return surf.grain;
-    case "bound":
-      return new THREE.MeshStandardMaterial({ color: c.clone().multiplyScalar(0.55), roughness: 0.55 });
-    default:
-      return surf.edge;
-  }
+  return rimMaterial(finish, color, surf);
 }
 
 function buildStitches(info: SimInfo): void {
@@ -333,34 +332,15 @@ function buildStitches(info: SimInfo): void {
 }
 
 const BRASS = new THREE.MeshStandardMaterial({ color: "#c9a24a", metalness: 1, roughness: 0.28 });
-const HOLE = new THREE.MeshBasicMaterial({ color: "#120b06" });
+
+/** Set hardware, labelled fasteners and punched holes, instanced by kind (hardware/instances.ts). */
+let hwLayer: HardwareLayer | null = null;
 
 function buildHardware(info: SimInfo): void {
   extras.remove(hardware);
-  hardware = new THREE.Group();
-  for (const hw of info.hardware) {
-    if (hw.kind) {
-      const piece = info.pieces.find((p) => p.id === hw.pieceId);
-      const g = hardwareMesh(hw.kind, hw.diameterMm, piece?.thicknessMm ?? 1.5, sim3d.metal);
-      g.userData = { hw, kind: "set" };
-      hardware.add(g);
-      continue;
-    }
-    const fastener = /rivet|snap|screw|stud|fasten/i.test(hw.label);
-    const r = hw.diameterMm / 2;
-    if (fastener) {
-      const cap = new THREE.Mesh(new THREE.CylinderGeometry(r * 2.2, r * 2.2, 1.6, 24), BRASS);
-      cap.rotation.x = Math.PI / 2;
-      cap.castShadow = true;
-      hardware.add(cap);
-      cap.userData = { hw, kind: "cap" };
-    } else {
-      const shape = (hw.slotMm ?? 0) > hw.diameterMm ? new THREE.CapsuleGeometry(r, hw.slotMm - hw.diameterMm, 4, 12) : new THREE.CircleGeometry(r, 20);
-      const disc = new THREE.Mesh(shape, HOLE);
-      disc.userData = { hw, kind: "hole" };
-      hardware.add(disc);
-    }
-  }
+  hwLayer?.dispose();
+  hwLayer = new HardwareLayer(info, sim3d.metal);
+  hardware = hwLayer.group;
   extras.add(hardware);
 }
 
@@ -437,6 +417,8 @@ function computeNormals(): void {
 function applyPositions(buf: Float32Array): void {
   if (!positions || !sim3d.info) return;
   const n = positions.length;
+  // A frame from the simulation before a rebuild has a different number of points: skip it.
+  if (buf.length < n) return;
   positions.set(buf.subarray(0, n));
   computeNormals();
   shared!.needsUpdate = true;
@@ -461,22 +443,7 @@ function applyPositions(buf: Float32Array): void {
 }
 
 function updateRim(p: PieceMeshes): void {
-  for (const r of p.rims) {
-    const arr = (r.mesh.geometry.getAttribute("position") as THREE.BufferAttribute).array as Float32Array;
-    let k = 0;
-    const put = (i: number, s: number) => {
-      arr[k++] = positions![i * 3] + normals![i * 3] * s;
-      arr[k++] = positions![i * 3 + 1] + normals![i * 3 + 1] * s;
-      arr[k++] = positions![i * 3 + 2] + normals![i * 3 + 2] * s;
-    };
-    for (const [a, b] of r.edges) {
-      put(a, -p.halfT); put(b, -p.halfT); put(b, p.halfT);
-      put(a, -p.halfT); put(b, p.halfT); put(a, p.halfT);
-    }
-    r.mesh.geometry.getAttribute("position").needsUpdate = true;
-    r.mesh.geometry.computeVertexNormals();
-    r.mesh.geometry.computeBoundingSphere();
-  }
+  for (const r of p.rims) writeRim(r.mesh, positions!, normals!, p.halfT);
   if (p.overlay) p.overlay.geometry.computeBoundingSphere();
 }
 
@@ -507,34 +474,8 @@ const surfaceAccess = {
   laceWidth: (pid: string) => state.project.pieces.find((p) => p.id === pid)?.stitch.holeMm ?? 3,
 };
 
-const zAxis = new THREE.Vector3(0, 0, 1);
-
 function updateHardware(): void {
-  const info = sim3d.info;
-  if (!info) return;
-  hardware.children.forEach((m) => {
-    const { hw, kind } = m.userData as { hw: SimInfo["hardware"][number]; kind: string };
-    const piece = info.pieces.find((p) => p.id === hw.pieceId);
-    const half = (piece?.thicknessMm ?? 1) / 2;
-    const { p, n } = surfacePoint(hw.at.tri, hw.at.bary);
-    if (kind === "set") {
-      // Local +z out of the grain side (the flesh normal is n), +x along the hardware's angle.
-      const out = n.clone().negate();
-      let xdir = new THREE.Vector3(1, 0, 0);
-      if (hw.toward) xdir = surfacePoint(hw.toward.tri, hw.toward.bary).p.sub(p);
-      xdir.addScaledVector(out, -xdir.dot(out));
-      if (xdir.lengthSq() < 1e-8) xdir = new THREE.Vector3(0, 0, 1).cross(out);
-      xdir.normalize();
-      const ydir = new THREE.Vector3().crossVectors(out, xdir);
-      m.position.copy(p).addScaledVector(out, half);
-      m.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xdir, ydir, out));
-      return;
-    }
-    const face = kind === "cap" ? -(half + 0.8) : -(half + 0.05);
-    m.position.copy(p).addScaledVector(n, face);
-    const q = new THREE.Quaternion().setFromUnitVectors(kind === "cap" ? new THREE.Vector3(0, 1, 0) : zAxis, kind === "cap" ? n : n.clone().negate());
-    m.quaternion.copy(q);
-  });
+  if (sim3d.info && hwLayer) hwLayer.update(surfacePoint);
 }
 
 const PIN_MAT = new THREE.MeshStandardMaterial({ color: "#b3261e", roughness: 0.3 });
@@ -674,6 +615,15 @@ export function frameView(): void {
   gtao.updateGtaoMaterial({ radius: r * 0.05 });
 }
 
+/** Zoom the 3D camera toward (factor > 1) or away from its target. */
+export function zoom3d(factor: number): void {
+  const t = controls.target;
+  const offset = camera.position.clone().sub(t).multiplyScalar(1 / Math.max(0.05, factor));
+  const d = offset.length();
+  if (d < camera.near * 2 || d > camera.far * 0.8) return;
+  camera.position.copy(t).add(offset);
+}
+
 /** Look at the target from a direction (unit vector toward the camera), keeping the distance. */
 export function lookFrom(dir: THREE.Vector3): void {
   const t = controls.target.clone();
@@ -707,6 +657,11 @@ export function viewPreset(name: "front" | "back" | "top" | "side" | "iso"): voi
 
 // ---------- interaction ----------
 
+/** Right-click (marking menu): whether the leather is under a screen point. */
+export function leatherAt(clientX: number, clientY: number): boolean {
+  return !!sim3d.info && !!pick({ clientX, clientY } as PointerEvent);
+}
+
 function pick(ev: PointerEvent): THREE.Intersection | null {
   const r = renderer.domElement.getBoundingClientRect();
   const ndc = new THREE.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
@@ -729,43 +684,54 @@ function hitVertex(hit: THREE.Intersection): number {
 function bindPointer(): void {
   const el = renderer.domElement;
   el.addEventListener("contextmenu", (e) => e.preventDefault());
+  // Capture phase, so a grab on the leather can stop the orbit control before it starts.
   el.addEventListener("pointerdown", async (ev) => {
-    if (ev.button !== 0 || !sim3d.info) return;
+    if (ev.button !== 0 || !sim3d.info || sim3d.tool === "pan") return;
     const hit = pick(ev);
-    if (sim3d.tool === "move") {
+    if (sim3d.tool === "orbit" || sim3d.tool === "move") {
       if (!hit) return;
+      controls.enabled = false;
       const vertex = hitVertex(hit);
       const normal = camera.getWorldDirection(new THREE.Vector3()).negate();
-      dragging = { vertex, plane: new THREE.Plane().setFromNormalAndCoplanarPoint(normal, hit.point) };
+      // Shift moves the whole piece; otherwise a hand-sized patch is pulled.
+      const radius = ev.shiftKey ? 1e9 : 12;
+      dragging = { vertex, plane: new THREE.Plane().setFromNormalAndCoplanarPoint(normal, hit.point), radius };
       el.setPointerCapture(ev.pointerId);
-      await invoke("sim_drag", { vertex, target: hit.point.toArray() });
-      sim3d.running = true;
+      await invoke("sim_drag", { vertex, target: hit.point.toArray(), radiusMm: radius });
+      if (!sim3d.running) {
+        sim3d.running = true;
+        setStatus(ev.shiftKey ? "Moving the piece. Let go to drop it." : "Pulling the leather. Shift+drag moves a whole piece.");
+      }
       notify();
     } else if (sim3d.tool === "pin" && hit) {
+      controls.enabled = false;
       const id = uid("pin");
       await invoke("sim_pin", { id, target: { vertex: hitVertex(hit) } });
       await refreshStatus();
       setStatus("Pinned. Simulate (Space) to let the rest hang.");
       notify();
     } else if (sim3d.tool === "weight" && hit) {
+      controls.enabled = false;
       const id = uid("w");
       await invoke("sim_add_weight", { id, target: { vertex: hitVertex(hit) }, grams: sim3d.weightGrams });
       await refreshStatus();
       sim3d.running = true;
       notify();
     } else if (sim3d.tool === "object") {
+      controls.enabled = false;
       await dropObject(sim3d.objectPreset, hit ? hit.point : null);
     }
-  });
+  }, { capture: true });
   el.addEventListener("pointermove", async (ev) => {
     if (!dragging) return;
     const r = el.getBoundingClientRect();
     const ndc = new THREE.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
     raycaster.setFromCamera(ndc, camera);
     const p = new THREE.Vector3();
-    if (raycaster.ray.intersectPlane(dragging.plane, p)) await invoke("sim_drag", { vertex: dragging.vertex, target: p.toArray() });
+    if (raycaster.ray.intersectPlane(dragging.plane, p)) await invoke("sim_drag", { vertex: dragging.vertex, target: p.toArray(), radiusMm: dragging.radius });
   });
   el.addEventListener("pointerup", async () => {
+    controls.enabled = true;
     if (!dragging) return;
     dragging = null;
     await invoke("sim_drag", { vertex: null, target: [0, 0, 0] });

@@ -61,6 +61,40 @@ export function button(label: string, onclick: () => void, cls = ""): HTMLButton
   return h("button", { class: `btn ${cls}`, onclick, type: "button" }, label);
 }
 
+/** Child-index path from `root` down to `el`. */
+function pathOf(root: Element, el: Element): number[] {
+  const path: number[] = [];
+  for (let e: Element | null = el; e && e !== root; e = e.parentElement) {
+    const parent: Element | null = e.parentElement;
+    if (!parent) break;
+    path.unshift(Array.prototype.indexOf.call(parent.children, e));
+  }
+  return path;
+}
+
+function atPath(root: Element, path: number[]): Element | null {
+  let e: Element | null = root;
+  for (const i of path) e = e?.children[i] ?? null;
+  return e;
+}
+
+/** Run `replace` (which rebuilds the inside of `container`) without losing where the container and
+ * any list inside it were scrolled to. */
+export function keepScroll(container: HTMLElement, replace: () => void): void {
+  const saved: [number[], number, number][] = [[[], container.scrollTop, container.scrollLeft]];
+  for (const e of container.querySelectorAll("*")) {
+    if (e.scrollTop > 0 || e.scrollLeft > 0) saved.push([pathOf(container, e), e.scrollTop, e.scrollLeft]);
+  }
+  replace();
+  for (const [path, top, left] of saved) {
+    const e = atPath(container, path);
+    if (e) {
+      e.scrollTop = top;
+      e.scrollLeft = left;
+    }
+  }
+}
+
 /** Re-render a container while keeping keyboard focus and caret on the same field. */
 export function rerender(container: HTMLElement, build: () => Node[]): void {
   const active = document.activeElement as HTMLInputElement | null;
@@ -71,9 +105,7 @@ export function rerender(container: HTMLElement, build: () => Node[]): void {
   } catch {
     caret = null;
   }
-  const scroll = container.scrollTop;
-  container.replaceChildren(...build().filter((n): n is Node => !!n));
-  container.scrollTop = scroll;
+  keepScroll(container, () => container.replaceChildren(...build().filter((n): n is Node => !!n)));
   if (key) {
     const el = container.querySelector<HTMLInputElement>(`[data-key="${CSS.escape(key)}"]`);
     if (el) {

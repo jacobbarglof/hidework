@@ -1,5 +1,6 @@
-/* Hidework. Layout follows CLO3D: menu bar, library dock, 3D window | 2D window, object browser
-   and property editor. Styling: dark tooled leather for the chrome, parchment for the pattern,
+/* Hidework. Layout: a Fusion 360 style application bar and ribbon on top; library dock,
+   3D window | 2D window, object browser and property editor below (as in CLO3D); a Rhino style
+   command line in the status bar. Styling: dark tooled leather for the chrome, parchment for the pattern,
    gilt and oxblood accents. Compact first; decoration only where it costs nothing. */
 
 :root {
@@ -11,7 +12,7 @@
   --line-soft: #3a2a1e;
   --text: #eadcc0;
   --text-soft: #b9a789;
-  --text-faint: #8c7a60;
+  --text-faint: #ab9877;
   --parchment: #efe2c4;
   --parchment-hi: #f6ecd3;
   --ink: #2b1d0e;
@@ -20,10 +21,30 @@
   --oxblood: #8a2620;
   --oxblood-hi: #b23b30;
   --ok: #7fae5a;
-  --bad: #e06a55;
+  --bad: #e8765f;
   --field: #160f0a;
+  /* Icons: bright outline, one coloured part. */
+  --ico-line: #f3e7cb;
+  --ico-blue: #5ea3e4;
+  --ico-gold: #dcb253;
+  --ico-red: #d65a46;
+  --ico-accent: #c9a24a;
+  --ico-tint: 0.2;
+  --active-bg: linear-gradient(180deg, #5d4123, #46301a);
   --serif: "EB Garamond", Garamond, Georgia, serif;
   --caps: Cinzel, Georgia, serif;
+  --edge: #120c08;
+  --on-accent: #fff3d9;
+  --on-accent-soft: #f0d9b5;
+  --menu-bg: #2f2218;
+  --kbd-bg: #3a2a1e;
+  --float-bg: rgba(28, 19, 12, 0.9);
+  --sel-bg: rgba(138, 38, 32, 0.6);
+  --sel-bg-soft: rgba(138, 38, 32, 0.35);
+  --bar-bg: linear-gradient(180deg, #3f2a1b, #2c1d13);
+  --btn-bg: linear-gradient(180deg, #3b2b1f, #2d2017);
+  --tip-bg: #f4ead2;
+  --ui-scale: 1;
   color-scheme: dark;
 }
 
@@ -52,24 +73,27 @@ body {
   display: none !important;
 }
 
-/* ---------- menu bar ---------- */
+/* ---------- application bar ---------- */
 
-.menubar {
+.appbar {
+  flex: none;
   display: flex;
   align-items: center;
-  gap: 10px;
-  height: 38px;
-  padding: 0 10px;
-  background: linear-gradient(180deg, #3f2a1b, #2c1d13);
-  border-bottom: 1px solid #120c08;
-  box-shadow: inset 0 -2px 0 rgba(201, 162, 74, 0.25);
+  gap: 8px;
+  height: 36px;
+  padding: 0 8px 0 10px;
+  background: var(--bar-bg);
+  border-bottom: 1px solid var(--edge);
+  box-shadow: inset 0 -2px 0 rgba(201, 162, 74, 0.22);
+  min-width: 0;
 }
 
 .brand {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-right: 8px;
+  margin-right: 4px;
+  flex: none;
 }
 
 .brand img {
@@ -85,36 +109,363 @@ body {
   letter-spacing: 0.03em;
 }
 
-.menus {
-  display: flex;
-  gap: 2px;
+.caret {
+  font-size: 10px;
+  opacity: 0.85;
 }
 
-.menus > button {
-  font: inherit;
-  font-size: 14.5px;
+.quick {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding-left: 6px;
+  border-left: 1px solid rgba(201, 162, 74, 0.25);
+}
+
+.app-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  gap: 8px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.app-title strong {
+  font-weight: 600;
+  font-size: 15px;
   color: var(--text);
-  background: none;
-  border: none;
-  padding: 4px 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-title span {
+  font-size: 12.5px;
+  font-style: italic;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.appbar-right {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.help-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: 3px;
   cursor: pointer;
 }
 
-.menus > button:hover,
-.menus > button.open {
-  background: rgba(201, 162, 74, 0.18);
-  color: var(--gold-hi);
+.help-btn:hover,
+.help-btn.menu-open {
+  background: rgba(201, 162, 74, 0.16);
+  border-color: var(--line);
 }
 
 .spacer {
   flex: 1;
 }
 
-.menubar-actions {
+/* ---------- ribbon ---------- */
+
+.ribbon {
+  flex: none;
+  background: var(--dock);
+  border-bottom: 1px solid var(--edge);
+  min-width: 0;
+}
+
+.ribbon-tabs {
+  display: flex;
+  gap: 2px;
+  height: 25px;
+  padding: 0 8px;
+  background: var(--dock-lo);
+  border-bottom: 1px solid var(--edge);
+  overflow: hidden;
+}
+
+.rtab {
+  flex: none;
+  font-family: var(--caps);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 0 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.rtab:hover {
+  color: var(--text);
+}
+
+.rtab.active {
+  color: var(--gold-hi);
+  border-bottom-color: var(--gold);
+  background: var(--dock);
+}
+
+.ribbon-panel {
+  display: flex;
+  align-items: stretch;
+  height: 80px;
+  padding: 3px 4px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+/* Command buttons: big (ribbon), small (stacked in a column), quick access and navigation bars. */
+.rb {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
+  font-family: var(--serif);
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 0;
+  white-space: nowrap;
+}
+
+.rb:hover {
+  background: rgba(201, 162, 74, 0.13);
+  border-color: var(--line);
+}
+
+.rb.active {
+  background: var(--active-bg);
+  border-color: var(--gold);
+  box-shadow: inset 0 0 0 1px rgba(226, 193, 116, 0.35);
+}
+
+.rb.active .rb-label {
+  color: var(--gold-hi);
+}
+
+.rb.off {
+  opacity: 0.45;
+}
+
+.rb.off:hover {
+  opacity: 0.75;
+}
+
+.rb-qa,
+.rb-nav {
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+}
+
+/* Small inputs inside the ribbon and the navigation bars. */
+.rfield {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 4px;
+  padding: 5px 4px 0;
+  min-width: 0;
+}
+
+.rf-top {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+
+.rf-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rfield.compact {
+  flex-direction: row;
+  align-items: center;
+  gap: 3px;
+  padding: 18px 2px 0 0;
+}
+
+.navbar .rfield.compact {
+  padding: 0 2px;
+}
+
+.rfield input.rf-input,
+.rfield select.rf-input {
+  width: 64px;
+  height: 22px;
+}
+
+.navbar .rfield input.rf-input {
+  width: 52px;
+}
+
+.rfield select.rf-input {
+  width: 108px;
+}
+
+input[type="range"].rf-input {
+  width: 96px;
+  flex: none;
+}
+
+.rf-unit {
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  min-width: 14px;
+}
+
+/* ---------- icons ---------- */
+/* One outline colour (follows the theme), a light tint for leather and paper, and a muted brass
+   accent on the working part. Butt caps and mitred corners keep them crisp. */
+
+.ico {
+  flex: none;
+  fill: none;
+  stroke: var(--ico-line);
+  stroke-width: 1.8;
+  stroke-linecap: butt;
+  stroke-linejoin: miter;
+  stroke-miterlimit: 4;
+  overflow: visible;
+}
+
+.ico .f-t,
+.ico .f-b {
+  fill: var(--ico-line);
+  fill-opacity: var(--ico-tint, 0.2);
+  stroke: none;
+}
+
+.ico .f-a,
+.ico .f-g {
+  fill: var(--ico-accent);
+  stroke: none;
+}
+
+.ico .f-l {
+  fill: var(--ico-line);
+  stroke: none;
+}
+
+.ico .f-r {
+  fill: var(--bad);
+  stroke: none;
+}
+
+.ico .s-a {
+  stroke: var(--ico-accent);
+  stroke-width: 2.2;
+}
+
+/* ---------- tooltips ---------- */
+
+.tip {
+  position: fixed;
+  z-index: 50;
+  max-width: 330px;
+  padding: 7px 10px 8px;
+  background: var(--tip-bg);
+  color: var(--ink);
+  border: 1px solid var(--gold);
+  border-radius: 3px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+  font-size: 13.5px;
+  line-height: 1.3;
+}
+
+.tip .ico {
+  --ico-line: #3a2814;
+}
+
+.tip-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 3px;
+}
+
+.tip-head strong {
+  flex: 1;
+  font-size: 14.5px;
+}
+
+.tip-keys {
+  display: flex;
+  gap: 3px;
+}
+
+.tip-help {
+  color: #3d2c18;
+}
+
+.tip-type {
+  margin-top: 4px;
+  font-size: 12.5px;
+  font-style: italic;
+  color: #6b5435;
+}
+
+.tip-type b {
+  font-style: normal;
+  color: var(--oxblood);
+}
+
+.tip-off {
+  margin-top: 3px;
+  font-size: 12.5px;
+  color: var(--oxblood);
+}
+
+.kbd {
+  display: inline-block;
+  padding: 0 5px;
+  margin: 0 1px;
+  min-width: 18px;
+  text-align: center;
+  font-family: var(--serif);
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--text);
+  background: var(--kbd-bg);
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.tip .kbd {
+  color: var(--ink);
+  background: #fffaf0;
+  border-color: #b9a27a;
 }
 
 /* ---------- buttons and fields ---------- */
@@ -126,7 +477,7 @@ body {
   padding: 3px 10px;
   border: 1px solid var(--line);
   border-radius: 3px;
-  background: linear-gradient(180deg, #3b2b1f, #2d2017);
+  background: var(--btn-bg);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -142,7 +493,7 @@ body {
 
 .btn.primary,
 .btn.seal {
-  color: #fff3d9;
+  color: var(--on-accent);
   border-color: #5a1410;
   background: linear-gradient(180deg, var(--oxblood-hi), var(--oxblood));
 }
@@ -180,7 +531,7 @@ body {
 }
 
 .sim-toggle.on {
-  color: #fff3d9;
+  color: var(--on-accent);
   border-color: #5a1410;
   background: linear-gradient(180deg, var(--oxblood-hi), var(--oxblood));
 }
@@ -255,14 +606,18 @@ input[type="color"] {
   min-height: 0;
 }
 
+/* Dock widths grow more slowly than the interface size and never take more than about a
+   quarter of the window each, so the 3D and pattern windows keep room at 200%. */
 .dock.left {
-  width: 230px;
-  border-right: 1px solid #120c08;
+  width: calc(var(--dock-l, 230px) * (1 + (var(--ui-scale, 1) - 1) * 0.45) / var(--ui-scale, 1));
+  max-width: calc(18vw / var(--ui-scale, 1));
+  border-right: 1px solid var(--edge);
 }
 
 .dock.right {
-  width: 320px;
-  border-left: 1px solid #120c08;
+  width: calc(var(--dock-r, 320px) * (1 + (var(--ui-scale, 1) - 1) * 0.45) / var(--ui-scale, 1));
+  max-width: calc(22vw / var(--ui-scale, 1));
+  border-left: 1px solid var(--edge);
 }
 
 .window {
@@ -282,88 +637,88 @@ input[type="color"] {
 }
 
 .win-head {
+  flex: none;
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 34px;
-  padding: 0 6px;
+  gap: 6px;
+  height: 22px;
+  padding: 0 4px 0 8px;
   background: var(--dock-hi);
-  border-bottom: 1px solid #120c08;
+  border-bottom: 1px solid var(--edge);
 }
 
 .win-title {
   font-family: var(--caps);
   font-weight: 700;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--gold);
   letter-spacing: 0.1em;
-  padding: 0 4px;
 }
 
-.win-toolbar {
+.win-sub {
+  font-size: 12.5px;
+  font-style: italic;
+  color: var(--text-faint);
+}
+
+.win-btn {
+  font-family: var(--serif);
   display: flex;
   align-items: center;
-  gap: 2px;
-  flex-wrap: nowrap;
+  justify-content: center;
+  width: 24px;
+  height: 18px;
+  padding: 0;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.win-btn:hover {
+  border-color: var(--line);
+  background: rgba(201, 162, 74, 0.13);
+}
+
+/* Fusion-style navigation bar at the bottom centre of each window. */
+.navbar {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px 4px;
+  max-width: calc(100% - 16px);
   overflow-x: auto;
   scrollbar-width: none;
+  background: var(--float-bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
 }
 
-.tb-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-family: var(--serif);
-  font-size: 13px;
+.navbar .rb-nav {
+  flex: none;
+}
+
+.navbar .rb-nav .caret {
+  margin-left: -3px;
   color: var(--text-soft);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 3px;
-  padding: 2px 7px;
-  height: 26px;
-  cursor: pointer;
-  white-space: nowrap;
 }
 
-.tb-btn .glyph {
-  font-size: 15px;
-  line-height: 1;
+.navbar .rb-nav:has(.caret) {
+  width: 38px;
 }
 
-.tb-btn:hover {
-  color: var(--gold-hi);
-  border-color: var(--line);
-}
-
-.tb-btn.active {
-  color: #fff3d9;
-  background: var(--oxblood);
-  border-color: #5a1410;
-}
-
-.tb-sep {
+.nav-sep {
+  flex: none;
   width: 1px;
   height: 18px;
+  margin: 0 3px;
   background: var(--line);
-  margin: 0 4px;
-}
-
-.tb-field {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12.5px;
-  color: var(--text-soft);
-  padding: 0 4px;
-  white-space: nowrap;
-}
-
-.tb-field input[type="number"] {
-  width: 58px;
-}
-
-.tb-field select {
-  width: auto;
 }
 
 .win-body {
@@ -383,7 +738,7 @@ input[type="color"] {
   flex: none;
   width: 5px;
   cursor: col-resize;
-  background: #120c08;
+  background: var(--edge);
 }
 
 .splitter:hover {
@@ -393,12 +748,12 @@ input[type="color"] {
 .hud {
   position: absolute;
   left: 10px;
-  bottom: 10px;
-  max-width: calc(100% - 20px);
+  top: 30px;
+  max-width: calc(100% - 140px);
   padding: 6px 10px;
   font-size: 13px;
   color: var(--text);
-  background: rgba(20, 13, 8, 0.78);
+  background: var(--float-bg);
   border: 1px solid var(--line);
   border-radius: 3px;
   pointer-events: none;
@@ -419,7 +774,7 @@ input[type="color"] {
   display: flex;
   flex: none;
   background: var(--dock-lo);
-  border-bottom: 1px solid #120c08;
+  border-bottom: 1px solid var(--edge);
 }
 
 .tabs button {
@@ -521,8 +876,8 @@ h2::after {
 }
 
 .list li.selected {
-  background: rgba(138, 38, 32, 0.55);
-  color: #fff3d9;
+  background: var(--sel-bg);
+  color: var(--on-accent);
 }
 
 .list li.empty {
@@ -553,7 +908,7 @@ h2::after {
 }
 
 .list li.selected .meta {
-  color: #f0d9b5;
+  color: var(--on-accent-soft);
 }
 
 .lib-grid {
@@ -582,7 +937,7 @@ h2::after {
 
 .lib-item.active {
   border-color: var(--oxblood-hi);
-  background: rgba(138, 38, 32, 0.35);
+  background: var(--sel-bg-soft);
 }
 
 .lib-item strong {
@@ -700,7 +1055,7 @@ h2::after {
 }
 
 .seam:hover {
-  background: #3d2c20;
+  background: var(--dock-hi);
 }
 
 .seam.ok {
@@ -745,7 +1100,7 @@ table.report {
 
 .report th {
   font-family: var(--caps);
-  font-size: 9.5px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   text-align: left;
   color: var(--text-faint);
@@ -819,75 +1174,118 @@ table.report {
   padding-bottom: 4px;
 }
 
-/* ---------- status, menus, dialogs ---------- */
+/* ---------- status bar and command line ---------- */
 
 .statusbar {
+  flex: none;
   display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  height: 24px;
   align-items: center;
-  padding: 0 10px;
+  gap: 8px;
+  height: 28px;
+  padding: 0 10px 0 6px;
   font-size: 13px;
   color: var(--text-soft);
   background: var(--dock-lo);
-  border-top: 1px solid #120c08;
+  border-top: 1px solid var(--edge);
+  min-width: 0;
 }
 
-#info {
+.cmd-prompt {
+  flex: none;
+  font-family: var(--caps);
+  font-weight: 700;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  color: var(--gold);
+  cursor: text;
+}
+
+.statusbar .cmd-input {
+  flex: none;
+  width: 230px;
+  height: 21px;
+  font-size: 14px;
+  color: var(--gold-hi);
+}
+
+.status {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status.prompt {
+  color: var(--gold-hi);
+  font-style: italic;
+}
+
+.info {
+  flex: none;
   color: var(--gold);
   white-space: nowrap;
 }
 
+.cmd-suggest {
+  position: fixed;
+  z-index: 35;
+  min-width: 360px;
+  max-width: min(560px, calc((100vw - 16px) / var(--ui-scale, 1)));
+  padding: 3px;
+  background: var(--menu-bg);
+  border: 1px solid var(--gold);
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.55);
+}
+
+.cs-row {
+  display: grid;
+  grid-template-columns: 22px auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px 3px 5px;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.cs-row:hover {
+  background: rgba(201, 162, 74, 0.12);
+}
+
+.cs-row.on {
+  background: var(--oxblood);
+  color: var(--on-accent);
+}
+
+.cs-word {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.cs-name {
+  font-size: 12.5px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cs-row.on .cs-name {
+  color: var(--on-accent-soft);
+}
+
+/* ---------- menus and dialogs ---------- */
+
 .menu {
   position: fixed;
   z-index: 30;
-  min-width: 240px;
+  min-width: 250px;
+  max-height: calc((100vh - 16px) / var(--ui-scale, 1));
+  overflow-y: auto;
   padding: 4px;
-  background: #2f2218;
+  background: var(--menu-bg);
   border: 1px solid var(--line);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.6);
-}
-
-.menu-item {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 18px;
-  width: 100%;
-  text-align: left;
-  padding: 5px 10px;
-  border: none;
-  background: none;
-  cursor: pointer;
-  font-family: var(--serif);
-  font-size: 14px;
-  color: var(--text);
-}
-
-.menu-item.stack {
-  flex-direction: column;
-  gap: 1px;
-}
-
-.menu-item .key {
-  font-size: 12px;
-  color: var(--text-faint);
-}
-
-.menu-item span.desc {
-  font-size: 12.5px;
-  color: var(--text-faint);
-}
-
-.menu-item:hover {
-  background: var(--oxblood);
-  color: #fff3d9;
-}
-
-.menu-item:hover .key,
-.menu-item:hover .desc {
-  color: #f0d9b5;
 }
 
 .menu-sep {
@@ -908,7 +1306,7 @@ table.report {
 
 .modal-card {
   width: 420px;
-  max-width: calc(100vw - 32px);
+  max-width: calc((100vw - 32px) / var(--ui-scale, 1));
   padding: 16px 20px 12px;
   background: var(--dock);
   border: 1px solid var(--gold);
@@ -996,27 +1394,6 @@ table.report {
   border-radius: 4px;
 }
 
-/* Narrow windows: icon-only toolbars. */
-.window {
-  container-type: inline-size;
-}
-
-@container (max-width: 700px) {
-  .tb-btn .label {
-    display: none;
-  }
-}
-
-.dock.left .tabs {
-  flex-wrap: wrap;
-}
-
-.dock.left .tabs button {
-  flex: 1 0 30%;
-  font-size: 9.5px;
-  letter-spacing: 0.04em;
-}
-
 /* Fusion-style ViewCube in the 3D window's top-right corner. */
 .viewcube {
   position: absolute;
@@ -1050,4 +1427,965 @@ table.report {
 
 .viewcube-home:hover {
   background: #ffffff;
+}
+
+/* ---------- window layouts: 3D only, both, pattern only ---------- */
+
+.layout-3d .w2d,
+.layout-3d .splitter,
+.layout-pattern .w3d,
+.layout-pattern .splitter {
+  display: none;
+}
+
+.layout-3d .w3d,
+.layout-pattern .w2d {
+  flex: 1 1 auto !important;
+}
+
+/* ---------- library: collapsible sections, compact pattern list ---------- */
+
+.dock .tabs {
+  flex-wrap: wrap;
+}
+
+.dock .tabs button {
+  flex: 1 0 auto;
+  white-space: nowrap;
+}
+
+.dock.left .tabs button {
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  padding: 7px 1px 5px;
+}
+
+.lib-filter {
+  margin: 2px 0 6px;
+}
+
+.lib-sec {
+  margin-bottom: 4px;
+}
+
+.lib-sec-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 6px 0 3px;
+  min-width: 0;
+}
+
+.lib-sec-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 2px;
+  font-family: var(--caps);
+  font-weight: 700;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--gold);
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  text-align: left;
+}
+
+.lib-sec-toggle:hover {
+  color: var(--gold-hi);
+}
+
+.lib-sec-toggle .chev {
+  width: 10px;
+  font-size: 10px;
+  color: var(--text-soft);
+}
+
+.lib-sec-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lib-sec-count {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: 12px;
+  letter-spacing: 0;
+  color: var(--text-faint);
+}
+
+.lib-sec.closed .lib-sec-head {
+  margin-bottom: 0;
+}
+
+.btn.tiny {
+  padding: 0 7px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.tpl-item {
+  display: block;
+  width: 100%;
+  padding: 3px 7px 4px;
+  margin-bottom: 2px;
+  text-align: left;
+  font-family: var(--serif);
+  color: var(--text);
+  background: var(--dock-hi);
+  border: 1px solid var(--line-soft);
+  border-left: 2px solid var(--line);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.tpl-item:hover {
+  border-color: var(--gold);
+}
+
+.tpl-item strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tpl-item span {
+  display: block;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lib-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.lib-item {
+  min-width: 0;
+}
+
+.lib-item strong,
+.lib-item span {
+  overflow-wrap: anywhere;
+}
+
+.seam.selected {
+  background: var(--sel-bg);
+}
+
+/* ---------- dialogs: New from pattern, Shortcuts ---------- */
+
+.modal-card {
+  max-height: calc((100vh - 40px) / var(--ui-scale, 1));
+  overflow-y: auto;
+}
+
+.modal-card.wide {
+  width: 560px;
+}
+
+.modal-filter {
+  margin: 4px 0 8px;
+  height: 26px;
+  font-size: 14px;
+}
+
+.tpl-dialog {
+  max-height: min(60vh, 520px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.tpl-cat {
+  margin: 8px 0 3px;
+  font-family: var(--caps);
+  font-weight: 700;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--gold);
+  border-bottom: 1px solid var(--line);
+}
+
+.tpl-row {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 4px 8px;
+  text-align: left;
+  font-family: var(--serif);
+  color: var(--text);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.tpl-row strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.tpl-row span {
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+
+.tpl-row:hover {
+  background: var(--oxblood);
+  color: var(--on-accent);
+}
+
+.tpl-row:hover span {
+  color: var(--on-accent-soft);
+}
+
+.help-card {
+  display: flex;
+  flex-direction: column;
+  width: min(940px, calc((100vw - 40px) / var(--ui-scale, 1)));
+  height: min(760px, calc((100vh - 40px) / var(--ui-scale, 1)));
+  overflow: hidden;
+}
+
+.help-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.help-head h2 {
+  flex: none;
+  margin: 0;
+}
+
+.help-head h2::after {
+  display: none;
+}
+
+.help-head .modal-filter {
+  flex: 1;
+  margin: 0;
+}
+
+.help-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 6px;
+  user-select: text;
+}
+
+.help-body > h2 {
+  margin: 14px 0 4px;
+}
+
+.help-intro p {
+  margin: 6px 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--text-soft);
+}
+
+.help-intro strong {
+  color: var(--text);
+}
+
+.help-table {
+  table-layout: fixed;
+}
+
+.help-table th:nth-child(1) {
+  width: 27%;
+}
+
+.help-table th:nth-child(2) {
+  width: 22%;
+}
+
+.help-table th:nth-child(3) {
+  width: 17%;
+}
+
+.help-table td {
+  vertical-align: top;
+  padding: 3px 4px;
+}
+
+.help-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.help-word {
+  font-weight: 600;
+  color: var(--gold-hi);
+  overflow-wrap: anywhere;
+}
+
+.help-word .args {
+  font-weight: 400;
+  font-style: italic;
+  color: var(--text-faint);
+}
+
+.help-word .aliases {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.help-desc {
+  color: var(--text-soft);
+}
+
+/* ---------- property editor: never clip at the right edge ---------- */
+
+.dock.right {
+  min-width: 0;
+}
+
+.property-editor {
+  overflow-x: hidden;
+}
+
+.property-editor *,
+.tab-body * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.property-editor .grid2,
+.grid2 {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.property-editor .grid3,
+.grid3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.row-field {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.property-editor .btn {
+  white-space: normal;
+  text-align: center;
+  line-height: 1.2;
+}
+
+.property-editor .btn-row .field {
+  flex: 1 1 90px;
+  margin: 0;
+}
+
+.property-editor table.report {
+  table-layout: fixed;
+}
+
+.report td,
+.report th,
+.field-label,
+.field-hint,
+.hint,
+.stat-line,
+.verdict,
+.seam strong,
+.seam span,
+.section-head h2 {
+  overflow-wrap: anywhere;
+}
+
+.metric {
+  gap: 8px;
+}
+
+.metric span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.metric b {
+  flex: none;
+  text-align: right;
+}
+
+.property-editor input[type="range"] {
+  min-width: 0;
+}
+
+/* ---------- smaller app windows ---------- */
+
+@media (max-width: 1400px) {
+  :root {
+    --dock-l: 210px;
+    --dock-r: 296px;
+  }
+
+  .statusbar .cmd-input {
+    width: 190px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .brand .title,
+  .app-title span {
+    display: none;
+  }
+
+  :root {
+    --dock-l: 190px;
+    --dock-r: 270px;
+  }
+}
+
+@media (min-width: 1900px) {
+  :root {
+    --dock-l: 260px;
+    --dock-r: 360px;
+  }
+
+  .statusbar .cmd-input {
+    width: 300px;
+  }
+}
+
+/* ================= interface size ================= */
+/* --ui-scale (100% to 200%, set in prefs.ts) zooms the chrome. The 3D and pattern canvases are
+   not zoomed; they draw at the screen's own resolution. */
+
+.appbar,
+.simplebar,
+.ribbon,
+.dock,
+.statusbar,
+.win-head,
+.navbar,
+.hud,
+.menu,
+.tip,
+.cmd-suggest,
+.modal-card,
+.fabric-head,
+.fabric-controls {
+  zoom: var(--ui-scale, 1);
+}
+
+/* Centred without percentages, so it stays centred when zoomed. */
+.navbar {
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  width: max-content;
+  transform: none;
+  /* Labelled buttons (Simple mode) wrap onto a second row in a narrow window. */
+  flex-wrap: wrap;
+  justify-content: center;
+  overflow: visible;
+}
+
+:focus-visible {
+  outline: 2px solid var(--gold-hi);
+  outline-offset: 1px;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.btn.big {
+  min-height: 44px;
+  padding: 8px 18px;
+  font-size: 16px;
+}
+
+/* ================= app bar extras ================= */
+
+.tools-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  font-family: var(--serif);
+  font-size: 13.5px;
+  color: var(--text);
+  background: var(--btn-bg);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tools-btn:hover {
+  border-color: var(--gold);
+  color: var(--gold-hi);
+}
+
+.help-btn {
+  width: auto;
+  gap: 5px;
+  padding: 0 10px;
+  font-family: var(--serif);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  border-color: var(--line);
+}
+
+.opt-label {
+  display: none;
+}
+
+/* ================= Simple mode ================= */
+
+[data-mode="simple"] .ribbon,
+[data-mode="simple"] .quick,
+[data-mode="simple"] .tools-btn,
+[data-mode="full"] .simplebar {
+  display: none;
+}
+
+.simplebar {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: 6px 10px;
+  background: var(--dock);
+  border-bottom: 1px solid var(--edge);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.rb-simple {
+  flex: none;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  min-width: 0;
+  max-width: none;
+  min-height: 38px;
+  padding: 4px 10px;
+  background: var(--dock-hi);
+  border-color: var(--line-soft);
+  border-radius: 5px;
+}
+
+.rb-simple .rb-label {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.1;
+  text-align: center;
+  white-space: normal;
+}
+
+.rb-simple.show-all {
+  border-color: var(--gold);
+}
+
+[data-mode="simple"] .opt-label {
+  display: inline;
+}
+
+[data-mode="simple"] .nav-adv {
+  display: none !important;
+}
+
+[data-mode="simple"] .appbar {
+  height: 44px;
+}
+
+[data-mode="simple"] .appbar .sim-toggle,
+[data-mode="simple"] .help-btn,
+[data-mode="simple"] .file-btn {
+  height: 36px;
+  font-size: 15px;
+}
+
+[data-mode="simple"] .win-head {
+  height: 28px;
+}
+
+[data-mode="simple"] .win-btn {
+  width: auto;
+  height: 24px;
+  gap: 5px;
+  padding: 0 8px;
+  border-color: var(--line);
+}
+
+.win-btn .opt-label {
+  font-size: 13px;
+  color: var(--text);
+}
+
+[data-mode="simple"] .navbar .rb-nav {
+  width: auto;
+  height: 40px;
+  padding: 0 8px;
+}
+
+[data-mode="simple"] .navbar .rb-label {
+  font-size: 14px;
+}
+
+[data-mode="simple"] .dock .tabs button {
+  font-size: 12px;
+  padding: 10px 2px 8px;
+}
+
+[data-mode="simple"] .list li {
+  padding: 6px 8px;
+}
+
+[data-mode="simple"] .property-editor .btn,
+[data-mode="simple"] .tab-body .btn {
+  min-height: 38px;
+  padding: 6px 12px;
+}
+
+[data-mode="simple"] .statusbar {
+  height: 36px;
+  font-size: 15px;
+}
+
+[data-mode="simple"] input[type="text"],
+[data-mode="simple"] input[type="number"],
+[data-mode="simple"] select {
+  min-height: 28px;
+  font-size: 15px;
+}
+
+/* ================= New project gallery ================= */
+
+.modal-card.gallery {
+  display: flex;
+  flex-direction: column;
+  width: min(1000px, calc((100vw - 40px) / var(--ui-scale, 1)));
+  height: min(840px, calc((100vh - 40px) / var(--ui-scale, 1)));
+  overflow: hidden;
+}
+
+.gallery .help-head h2 {
+  font-size: 15px;
+}
+
+.gallery .tpl-dialog {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  padding: 0 4px 8px 0;
+}
+
+.tpl-dialog h3.tpl-cat {
+  margin: 14px 0 6px;
+  padding-bottom: 2px;
+  font-size: 12px;
+}
+
+.tpl-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.tpl-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px;
+  text-align: left;
+  font-family: var(--serif);
+  color: var(--text);
+  background: var(--dock-hi);
+  border: 2px solid var(--line-soft);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.tpl-card:hover {
+  border-color: var(--gold);
+}
+
+.tpl-pic {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 112px;
+  margin-bottom: 4px;
+  background: var(--parchment);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.tpl-pic .ico {
+  --ico-line: #3a2814;
+  opacity: 0.55;
+}
+
+.tpl-pic svg:not(.ico) {
+  width: 100%;
+  height: 100%;
+  padding: 8px;
+  fill: #c98f55;
+  fill-opacity: 0.85;
+  stroke: var(--ink);
+  stroke-linejoin: round;
+}
+
+.tpl-card strong {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.tpl-card span {
+  font-size: 13px;
+  line-height: 1.25;
+  color: var(--text-soft);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* ================= Help and settings dialogs ================= */
+
+.modal-card h3 {
+  margin: 14px 0 6px;
+  font-family: var(--caps);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: var(--gold-hi);
+}
+
+.guide-card {
+  display: flex;
+  flex-direction: column;
+  width: min(760px, calc((100vw - 40px) / var(--ui-scale, 1)));
+  max-height: calc((100vh - 40px) / var(--ui-scale, 1));
+  overflow: hidden;
+}
+
+.guide-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 6px;
+  user-select: text;
+}
+
+.guide-sec p {
+  margin: 3px 0;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.guide-foot {
+  margin-top: 16px;
+  font-size: 14px;
+  font-style: italic;
+  color: var(--text-soft);
+}
+
+.settings-card {
+  width: min(660px, calc((100vw - 40px) / var(--ui-scale, 1)));
+}
+
+.size-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.size-row .btn:first-child {
+  font-size: 14px;
+}
+
+.size-row .btn:last-child {
+  font-size: 19px;
+}
+
+.size-now {
+  min-width: 70px;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.choice-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+}
+
+.choice {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 64px;
+  padding: 10px 12px;
+  text-align: left;
+  font-family: var(--serif);
+  color: var(--text);
+  background: var(--dock-hi);
+  border: 2px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.choice strong {
+  font-size: 16px;
+}
+
+.choice span {
+  font-size: 13.5px;
+  color: var(--text-soft);
+}
+
+.choice.on {
+  border-color: var(--gold);
+  background: var(--active-bg);
+}
+
+.choice:hover {
+  border-color: var(--gold-hi);
+}
+
+/* ================= Light theme ================= */
+
+:root[data-theme="light"] {
+  --bg: #e7dfd1;
+  --dock: #f8f4ec;
+  --dock-hi: #efe7d8;
+  --dock-lo: #e6dccb;
+  --line: #b3a07c;
+  --line-soft: #d4c6aa;
+  --text: #24180c;
+  --text-soft: #46351f;
+  --text-faint: #65523a;
+  --gold: #765414;
+  --gold-hi: #6e4a0c;
+  --ok: #2c6420;
+  --bad: #9e2a1c;
+  --oxblood: #8a2620;
+  --oxblood-hi: #a83228;
+  --field: #ffffff;
+  --ico-line: #2e2010;
+  --ico-blue: #2f7cc4;
+  --ico-gold: #c8962a;
+  --ico-red: #c0392b;
+  --ico-accent: #9c7424;
+  --ico-tint: 0.13;
+  --active-bg: linear-gradient(180deg, #f6e2b5, #ecd29c);
+  --edge: #b3a07c;
+  --on-accent: #ffffff;
+  --on-accent-soft: #fbe9e4;
+  --menu-bg: #fbf8f2;
+  --kbd-bg: #ffffff;
+  --float-bg: rgba(250, 246, 238, 0.94);
+  --sel-bg: #a83228;
+  --sel-bg-soft: rgba(168, 50, 40, 0.18);
+  --bar-bg: linear-gradient(180deg, #f3ebdd, #e3d8c4);
+  --btn-bg: linear-gradient(180deg, #fffcf6, #ece3d3);
+  --tip-bg: #fffdf8;
+  color-scheme: light;
+}
+
+:root[data-theme="light"] .brand .title {
+  color: #6e4a0c;
+}
+
+/* ================= High contrast theme ================= */
+
+:root[data-theme="contrast"] {
+  --bg: #000000;
+  --dock: #000000;
+  --dock-hi: #121212;
+  --dock-lo: #000000;
+  --line: #ffffff;
+  --line-soft: #a8a8a8;
+  --text: #ffffff;
+  --text-soft: #ffffff;
+  --text-faint: #e8e8e8;
+  --gold: #ffd84d;
+  --gold-hi: #ffe680;
+  --oxblood: #c4001a;
+  --oxblood-hi: #e0102c;
+  --ok: #7dff7d;
+  --bad: #ff8a7a;
+  --field: #000000;
+  --ico-line: #ffffff;
+  --ico-blue: #4db2ff;
+  --ico-gold: #ffd84d;
+  --ico-red: #ff6b5a;
+  --ico-accent: #ffd84d;
+  --ico-tint: 0.25;
+  --active-bg: #3d3300;
+  --edge: #ffffff;
+  --on-accent: #ffffff;
+  --on-accent-soft: #ffffff;
+  --menu-bg: #000000;
+  --kbd-bg: #000000;
+  --float-bg: #000000;
+  --sel-bg: #c4001a;
+  --sel-bg-soft: #3d0008;
+  --bar-bg: #000000;
+  --btn-bg: #000000;
+  --tip-bg: #000000;
+  color-scheme: dark;
+}
+
+:root[data-theme="contrast"] .rb.active,
+:root[data-theme="contrast"] .choice.on {
+  border-width: 2px;
+  border-color: var(--gold);
+}
+
+:root[data-theme="contrast"] .btn,
+:root[data-theme="contrast"] .rb-simple,
+:root[data-theme="contrast"] .tpl-card,
+:root[data-theme="contrast"] .lib-item {
+  border-color: #ffffff;
+}
+
+:root[data-theme="contrast"] .tip,
+:root[data-theme="contrast"] .tip-help,
+:root[data-theme="contrast"] .tip-type {
+  color: #ffffff;
+}
+
+:root[data-theme="contrast"] .tip .ico {
+  --ico-line: #ffffff;
+}
+
+:root[data-theme="contrast"] .tip .kbd {
+  color: #ffffff;
+  background: #000000;
+  border-color: #ffffff;
+}
+
+:root[data-theme="contrast"] .tip-type b,
+:root[data-theme="contrast"] .tip-off {
+  color: var(--gold);
 }

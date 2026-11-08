@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/hidework-core", "crates/hidework-mcp", "src-tauri"]
+members = ["crates/hidework-core", "crates/hidework-mcp", "crates/hidework-gpu", "src-tauri"]
 resolver = "2"
 
 # The simulator is far too slow unoptimised; keep it fast in dev builds and tests.
@@ -7,6 +7,6 @@ resolver = "2"
 opt-level = 3
 
 [workspace.package]
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"

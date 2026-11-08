@@ -1,0 +1,141 @@
+/* Drawing prompts and the edge size box in the 2D pattern window. The pattern itself is always on
+   parchment, so these use the parchment and ink colours in every theme. */
+
+.draw-prompt {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(640px, calc(100% - 32px));
+  padding: 8px 16px 9px;
+  background: rgba(255, 248, 230, 0.96);
+  color: #2b1d0e;
+  border: 2px solid #7a1f1a;
+  border-radius: 8px;
+  box-shadow: 0 3px 10px rgba(60, 35, 15, 0.25);
+  font-family: "EB Garamond", Garamond, Georgia, serif;
+  text-align: center;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.draw-prompt.hidden,
+.edge-box.hidden {
+  display: none;
+}
+
+.draw-prompt .dp-step {
+  font-family: Cinzel, Georgia, serif;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: #7a1f1a;
+}
+
+.draw-prompt .dp-main {
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.draw-prompt .dp-alt {
+  font-size: 14px;
+  line-height: 1.25;
+  color: #5a4630;
+}
+
+.draw-prompt .dp-typed {
+  margin-top: 4px;
+  font-size: 18px;
+  font-weight: 700;
+  color: #7a1f1a;
+}
+
+.draw-prompt.big .dp-step {
+  font-size: 14px;
+}
+
+.draw-prompt.big .dp-main {
+  font-size: 24px;
+}
+
+.draw-prompt.big .dp-alt {
+  font-size: 17px;
+}
+
+.draw-prompt.big .dp-typed {
+  font-size: 22px;
+}
+
+.edge-box {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 9px 7px;
+  background: rgba(255, 248, 230, 0.97);
+  color: #2b1d0e;
+  border: 1.5px solid #7a1f1a;
+  border-radius: 7px;
+  box-shadow: 0 3px 10px rgba(60, 35, 15, 0.25);
+  font-family: "EB Garamond", Garamond, Georgia, serif;
+  font-size: 14px;
+  z-index: 3;
+}
+
+.edge-box .eb-head {
+  font-family: Cinzel, Georgia, serif;
+  font-size: 11px;
+  color: #7a1f1a;
+}
+
+.edge-box label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.edge-box .eb-name {
+  min-width: 46px;
+  font-weight: 600;
+}
+
+.edge-box .eb-input {
+  width: 72px;
+  padding: 2px 5px;
+  font: inherit;
+  font-weight: 700;
+  color: #2b1d0e;
+  background: #fffaf0;
+  border: 1px solid #8a6a44;
+  border-radius: 4px;
+}
+
+.edge-box .eb-input:focus {
+  outline: 2px solid #b08a3e;
+  outline-offset: 0;
+}
+
+.edge-box .eb-unit {
+  min-width: 18px;
+  color: #5a4630;
+}
+
+.edge-box .eb-note {
+  font-size: 12px;
+  font-style: italic;
+  color: #5a4630;
+  max-width: 170px;
+}
+
+.edge-box.big {
+  font-size: 17px;
+}
+
+.edge-box.big .eb-input {
+  width: 84px;
+}
+
+.edge-box.big .eb-note {
+  font-size: 14px;
+  max-width: 200px;
+}

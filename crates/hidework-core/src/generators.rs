@@ -74,6 +74,7 @@ fn base_piece(name: &str, material_id: &str, at: Vec2) -> Piece {
         notes: String::new(),
         hardware: vec![],
         marks: vec![],
+        tooling: vec![],
         place: None,
     }
 }

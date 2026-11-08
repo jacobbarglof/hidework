@@ -10,6 +10,10 @@ import { addStrap, closeFabricTest, deletePiece, makeGusset, openFabricTest, pan
 import { OBJECT_PRESETS, bounds, capture3d, dropObject, frameView, lookFrom, needsRebuild, rebuild, refreshStatus, removeSceneItem, resetSim, runFrames, setHeat, setMetal, setProps, sim3d, viewPreset } from "./view3d";
 import * as THREE from "three";
 import { invoke } from "@tauri-apps/api/core";
+import { COMMANDS, exactCommand, runCommand } from "./commands";
+import { mirroredPiece, ovalPiece, slotPiece } from "./shapeops";
+import { alignSelected, copySelection, cutSelection, distributeSelected, mergeSelected, pasteClipboard, selectPieces, selectedPieces, setSnapGrid, toggleSnap, type AlignTo } from "./editing";
+import { setLayout, type Layout } from "./layout";
 import type { Prop } from "./simtypes";
 import { edit, notify, piece, redo, setProject, state, uid, undo, whenComputed, type Sel } from "./store";
 import { OZ_MM } from "./units";
@@ -153,6 +157,18 @@ const handlers: Record<string, Handler> = {
       piece.edges = verts.map(() => ({ type: "line", stitched: false }) as Edge);
     } else if (p.shape === "rounded") {
       piece = roundedRectPiece(at, w, ht, Number(p.radius ?? 6), String(p.name ?? "Panel"));
+    } else if (p.shape === "oval" || p.shape === "circle") {
+      // A circle takes its size from width (the distance across).
+      piece = ovalPiece(at, w, p.shape === "circle" ? w : ht, String(p.name ?? (p.shape === "circle" ? "Circle" : "Oval")));
+    } else if (p.shape === "slot" || p.shape === "strap_end") {
+      const ends = p.shape === "slot" ? "both" : p.end === "point" ? "point" : "round";
+      piece = slotPiece(at, w, ht, ends, String(p.name ?? (p.shape === "slot" ? "Slot" : "Strap end")));
+    } else if (p.shape === "mirror_half") {
+      // vertices: one half, from a point on the centre line round to another point on it; the
+      // centre line is the vertical line through the first vertex.
+      const verts = ((p.vertices ?? []) as V[]).map((v) => ({ x: Number(v.x) + at.x, y: Number(v.y) + at.y }));
+      if (verts.length < 3) throw new Error("mirror_half needs at least three vertices: start on the centre line, one or more beside it, end on the centre line.");
+      piece = mirroredPiece(verts.map((v) => ({ p: v })), verts[0].x, String(p.name ?? "Panel"));
     } else piece = rectPiece(at, w, ht, String(p.name ?? "Panel"));
     if (p.materialId) piece.materialId = String(p.materialId);
     if (p.stitchAll) piece.edges.forEach((e) => (e.stitched = true));
@@ -692,6 +708,86 @@ const handlers: Record<string, Handler> = {
     });
     return { pieceId: x.id, dartEdges: pair, joinId: jid };
   },
+  /** Run a typed command exactly as in the command line, e.g. "Rectangle 80 50" or "View 3d". */
+  run_command: async (p) => {
+    const words = String(p.text ?? "").trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return { commands: COMMANDS.map((c) => c.id) };
+    const cmd = exactCommand(words[0]);
+    if (!cmd) throw new Error(`No command called ${words[0]}. Call run_command with no text to list them.`);
+    runCommand(cmd, words.slice(1));
+    await new Promise((r) => setTimeout(r, 150));
+    return { ran: cmd.id, status: state.status };
+  },
+  check_pattern: async () => {
+    const issues = await api.check(state.project);
+    return { count: issues.length, issues };
+  },
+  /** Run the pattern in 3D for a few seconds, off to the side, and report what goes wrong. */
+  test_in_3d: async (p) => {
+    const issues = await invoke<unknown[]>("sim_diagnose", { project: state.project, seconds: Number(p.seconds ?? 4) });
+    return { count: issues.length, issues };
+  },
+  /** Grab the leather at a vertex and pull it toward a point (mm), or move the whole piece. */
+  sim_pull: async (p) => {
+    if (needsRebuild() || !sim3d.info) await rebuild();
+    const vertex = Number(p.vertex);
+    const radiusMm = p.wholePiece ? 1e9 : Number(p.radiusMm ?? 12);
+    await invoke("sim_drag", { vertex, target: p.target, radiusMm });
+    await runFrames(Number(p.frames ?? 60));
+    if (p.release !== false) await invoke("sim_drag", { vertex: null, target: [0, 0, 0], radiusMm: 0 });
+    await refreshStatus();
+    return { ok: true, metrics: sim3d.status?.metrics };
+  },
+  select_pieces: (p) => {
+    selectPieces((p.pieceIds as string[]) ?? []);
+    notify();
+    return { selected: selectedPieces() };
+  },
+  clipboard: async (p) => {
+    const op = String(p.op);
+    if (p.pieceIds) { selectPieces(p.pieceIds as string[]); notify(); }
+    if (op === "copy") copySelection();
+    else if (op === "cut") cutSelection();
+    else if (op === "paste") pasteClipboard();
+    else throw new Error("op must be copy, cut or paste");
+    await new Promise((r) => setTimeout(r, 600));
+    return { selected: selectedPieces(), status: state.status };
+  },
+  merge_pieces: (p) => {
+    if (p.pieceIds) selectPieces(p.pieceIds as string[]);
+    mergeSelected();
+    return { selected: selectedPieces(), status: state.status };
+  },
+  arrange_selection: (p) => {
+    if (p.pieceIds) selectPieces(p.pieceIds as string[]);
+    if (p.align) alignSelected(String(p.align) as AlignTo);
+    if (p.distribute) distributeSelected(String(p.distribute) as "x" | "y");
+    return { status: state.status };
+  },
+  set_layout: (p) => {
+    setLayout(String(p.layout ?? "both") as Layout);
+    return { layout: p.layout };
+  },
+  set_snap: (p) => {
+    if (p.gridMm !== undefined) setSnapGrid(Number(p.gridMm));
+    toggleSnap(Boolean(p.on ?? true));
+    return { status: state.status };
+  },
+  /** A ready-made tooling design (border, basketweave, floral, corner, checker, diamond, monogram) on a piece. */
+  add_tooling_design: async (p) => {
+    const pc = piece(String(p.pieceId));
+    if (!pc) throw new Error(`No piece ${p.pieceId}`);
+    const request = { design: String(p.design ?? "border"), tool: p.tool ?? null, at: p.at ?? { x: 0, y: 0 }, sizeMm: Number(p.sizeMm ?? 0), text: String(p.text ?? ""), insetMm: Number(p.insetMm ?? 0) };
+    const strokes = await invoke<NonNullable<Piece["tooling"]>>("tooling_design", { piece: pc, request, id: uid("tl") });
+    edit(() => (pc.tooling = [...(pc.tooling ?? []), ...strokes]));
+    return { added: strokes.length, ids: strokes.map((s) => s.id) };
+  },
+  page_count: async (p) => {
+    const page = (String(p.page ?? state.page) as "letter" | "a4");
+    const fewest = await invoke<number>("page_count", { project: state.project, page, layout: "fewestPages" });
+    const drawn = await invoke<number>("page_count", { project: state.project, page, layout: "asDrawn" });
+    return { fewestPages: fewest, asDrawn: drawn };
+  },
   look_from: (p) => {
     lastView = "3d";
     lookFrom(new THREE.Vector3(Number(p.x ?? 0.55), Number(p.y ?? -0.75), Number(p.z ?? 0.6)));
@@ -706,9 +802,9 @@ async function settledBuild(): Promise<void> {
 }
 
 /** Methods that change the pattern return a screenshot by default. */
-const READ_ONLY = new Set(["get_state", "list_templates", "list_material_presets", "list_catalogue", "bill_of_materials", "save_project", "export", "sim_status"]);
+const READ_ONLY = new Set(["check_pattern", "test_in_3d", "page_count", "get_state", "list_templates", "list_material_presets", "list_catalogue", "bill_of_materials", "save_project", "export", "sim_status"]);
 /** Methods whose screenshot should show the 3D window or the fabric test, not the pattern. */
-const NON_PATTERN = new Set(["screenshot", "view", "simulate", "sim_pin", "sim_weight", "sim_object", "sim_remove", "sim_props", "sim_status", "run_drape", "look_from", "make_bag", "arrange_piece", "set_form"]);
+const NON_PATTERN = new Set(["sim_pull", "screenshot", "view", "simulate", "sim_pin", "sim_weight", "sim_object", "sim_remove", "sim_props", "sim_status", "run_drape", "look_from", "make_bag", "arrange_piece", "set_form"]);
 
 export async function initControl(): Promise<void> {
   await listen<{ id: number; method: string; params: Params | null }>("hw-control", async (ev) => {

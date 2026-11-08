@@ -1,0 +1,977 @@
+/* Hidework, made easy: the welcome, "Your steps", Change the size, More options, the Simple 3D
+   buttons, the status bar's Undo, and Simple mode's legibility rules (no text under 14 px at
+   100%, hit targets of at least 44 px, visible focus). Colours come from the theme tokens in
+   style.css. */
+
+/* ---------- left dock: steps above the library ---------- */
+
+.library {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.steps {
+  flex: none;
+  max-height: 62%;
+  overflow-y: auto;
+  padding: 8px 10px 10px;
+  background: var(--dock-hi);
+  border-bottom: 3px double var(--line);
+}
+
+.steps-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.steps-head h2 {
+  font-size: 14px;
+}
+
+.steps-hide {
+  flex: none;
+}
+
+.steps-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.step {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.step-num {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  margin-top: 2px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-soft);
+}
+
+.step.done .step-num {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.step.next .step-num {
+  border-color: var(--gold);
+  background: var(--gold);
+  color: var(--bg);
+}
+
+.step-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.step-body strong {
+  font-size: 16px;
+  line-height: 1.25;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.step.done .step-body strong {
+  color: var(--text-soft);
+}
+
+.step-body p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.35;
+  color: var(--text);
+}
+
+.btn.step-btn {
+  align-self: flex-start;
+  min-height: 40px;
+  max-width: 100%;
+  white-space: normal;
+  text-align: left;
+  font-size: 15px;
+}
+
+.step.next .btn.step-btn {
+  min-height: 46px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.steps-done {
+  margin: 8px 0 0;
+  font-size: 15px;
+  color: var(--ok);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ---------- the welcome ---------- */
+
+.modal-card.welcome {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(1080px, calc((100vw - 40px) / var(--ui-scale, 1)));
+  max-height: calc((100vh - 40px) / var(--ui-scale, 1));
+  padding: 22px 26px 18px;
+  overflow: hidden;
+}
+
+.wl-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.wl-title {
+  margin: 0;
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 30px;
+  line-height: 1.15;
+  color: var(--text);
+}
+
+.wl-lead {
+  margin: 4px 0 0;
+  font-size: 17px;
+  color: var(--text-soft);
+}
+
+.wl-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 4px 4px 0;
+}
+
+.wl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 12px;
+}
+
+.wl-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 80px;
+  padding: 10px 12px;
+  text-align: left;
+  font-family: var(--serif);
+  color: var(--text);
+  background: var(--dock-hi);
+  border: 2px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.wl-card:hover,
+.wl-tpl:hover {
+  border-color: var(--gold);
+  background: var(--dock-lo);
+}
+
+.wl-pic {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 62px;
+  height: 62px;
+  border-radius: 6px;
+  background: var(--parchment);
+}
+
+.wl-pic .ico {
+  --ico-line: #2b1d0e;
+}
+
+.wl-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.wl-text strong {
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.wl-text span {
+  font-size: 15px;
+  color: var(--text-soft);
+}
+
+.wl-card.wl-resume {
+  width: 100%;
+  margin-bottom: 10px;
+  border-color: var(--gold);
+  background: var(--active-bg);
+}
+
+.wl-resume .wl-text strong {
+  font-size: 21px;
+}
+
+.wl-sub {
+  margin: 12px 0 6px;
+  font-family: var(--serif) !important;
+  font-size: 17px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0 !important;
+  color: var(--text-soft) !important;
+}
+
+.wl-tpls {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.wl-tpl {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  text-align: left;
+  font-family: var(--serif);
+  color: var(--text);
+  background: var(--dock-hi);
+  border: 2px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.wl-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 120px;
+  margin-bottom: 4px;
+  border-radius: 5px;
+  background: var(--parchment);
+  overflow: hidden;
+}
+
+.wl-thumb .ico {
+  --ico-line: #3a2814;
+  opacity: 0.6;
+}
+
+.wl-thumb svg:not(.ico) {
+  width: 100%;
+  height: 100%;
+  padding: 8px;
+  fill: #c98f55;
+  fill-opacity: 0.85;
+  stroke: var(--ink);
+  stroke-linejoin: round;
+}
+
+.wl-tpl strong {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.wl-tpl > span:last-child {
+  font-size: 15px;
+  line-height: 1.3;
+  color: var(--text-soft);
+}
+
+.wl-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.wl-again {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  font-size: 16px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.wl-again input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+}
+
+.btn.wl-back {
+  flex: none;
+}
+
+/* ---------- Change the size ---------- */
+
+.size-q {
+  margin: 10px 0 12px;
+}
+
+.size-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text);
+}
+
+.size-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn.size-bump {
+  flex: none;
+  width: 44px;
+  min-height: 44px;
+  padding: 0;
+  font-size: 24px;
+  line-height: 1;
+}
+
+input.size-input {
+  flex: 1 1 60px;
+  min-width: 0;
+  min-height: 44px;
+  font-size: 20px !important;
+  text-align: center;
+}
+
+.size-unit {
+  flex: none;
+  font-size: 15px;
+  color: var(--text-soft);
+}
+
+/* ---------- More options ---------- */
+
+details.more {
+  margin: 12px 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+details.more > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 12px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+}
+
+details.more > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.more > summary::before {
+  content: "▸";
+  color: var(--gold);
+}
+
+details.more[open] > summary::before {
+  content: "▾";
+}
+
+details.more[open] > summary {
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.more-body {
+  padding: 4px 10px 10px;
+}
+
+.btn-row.big-row .btn {
+  flex: 1 1 140px;
+}
+
+.hint.plain,
+.stat-line.plain {
+  font-style: normal;
+  color: var(--text);
+}
+
+/* ---------- 3D window in Simple mode ---------- */
+
+.easy3d {
+  position: absolute;
+  z-index: 5;
+  zoom: var(--ui-scale, 1);
+}
+
+.easy3d.cta {
+  left: 0;
+  right: 0;
+  bottom: 84px;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.easy3d-cta {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 24px;
+  font-family: var(--serif);
+  text-align: left;
+  color: var(--on-accent);
+  background: linear-gradient(180deg, var(--oxblood-hi), var(--oxblood));
+  border: 2px solid #5a1410;
+  border-radius: 10px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+
+.easy3d-cta .ico {
+  --ico-line: var(--on-accent);
+}
+
+.easy3d-cta span {
+  display: flex;
+  flex-direction: column;
+}
+
+.easy3d-cta strong {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.easy3d-cta small {
+  font-size: 15px;
+  color: var(--on-accent-soft);
+}
+
+.easy3d-cta:hover {
+  filter: brightness(1.1);
+}
+
+.easy3d.bar {
+  left: 10px;
+  bottom: 70px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  max-width: calc(100% - 20px);
+}
+
+.easy3d-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 12px;
+  font-family: var(--serif);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--float-bg);
+  border: 2px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+}
+
+.easy3d-btn:hover {
+  border-color: var(--gold);
+}
+
+.easy3d-btn.on {
+  border-color: var(--gold);
+  background: var(--active-bg);
+}
+
+/* The 3D window's corner Home button carries its words in Simple mode. */
+.viewcube-home {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.viewcube-home .ico {
+  --ico-line: #3b4652;
+}
+
+.vc-label {
+  display: none;
+}
+
+[data-mode="simple"] .viewcube-home {
+  top: auto;
+  bottom: -40px;
+  left: auto;
+  right: 0;
+  width: auto;
+  height: 36px;
+  padding: 0 10px;
+  white-space: nowrap;
+  zoom: var(--ui-scale, 1);
+}
+
+[data-mode="simple"] .vc-label {
+  display: inline;
+  font-family: var(--serif);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* ---------- status bar Undo ---------- */
+
+.btn.status-undo {
+  flex: none;
+  font-weight: 600;
+  border-color: var(--gold);
+  color: var(--gold-hi);
+}
+
+/* ---------- simple bar groups ---------- */
+
+.sb-sep {
+  flex: none;
+  width: 1px;
+  margin: 6px 6px;
+  background: var(--line);
+}
+
+/* ================= Simple mode: legibility and hit targets ================= */
+
+[data-mode="simple"] .appbar {
+  height: 36px;
+}
+
+[data-mode="simple"] .appbar .file-btn,
+[data-mode="simple"] .appbar .help-btn {
+  height: 36px;
+  min-width: 64px;
+  font-size: 15px;
+}
+
+/* See it in 3D in the bar does the same job; one way to do it is enough. */
+[data-mode="simple"] .appbar .sim-toggle {
+  display: none;
+}
+
+[data-mode="simple"] .app-title strong {
+  font-size: 17px;
+}
+
+[data-mode="simple"] .app-title span {
+  font-size: 15px;
+}
+
+[data-mode="simple"] .win-head {
+  height: 34px;
+}
+
+[data-mode="simple"] .win-title {
+  font-size: 14px;
+}
+
+[data-mode="simple"] .win-sub,
+[data-mode="simple"] .win-btn .opt-label {
+  font-size: 15px;
+}
+
+[data-mode="simple"] .win-btn {
+  height: 36px;
+  padding: 0 12px;
+}
+
+[data-mode="simple"] .navbar .rb-nav {
+  height: 36px;
+}
+
+[data-mode="simple"] .navbar .rb-label {
+  font-size: 15px;
+}
+
+[data-mode="simple"] .dock .tabs button {
+  min-height: 36px;
+  font-size: 14px;
+  letter-spacing: 0.05em;
+}
+
+[data-mode="simple"] .list li {
+  min-height: 36px;
+  font-size: 15px;
+}
+
+[data-mode="simple"] .list .meta {
+  font-size: 15px;
+}
+
+[data-mode="simple"] .property-editor .btn,
+[data-mode="simple"] .tab-body .btn,
+[data-mode="simple"] .steps .btn,
+[data-mode="simple"] .modal-card .btn {
+  min-height: 36px;
+  padding: 6px 14px;
+  font-size: 15px;
+}
+
+[data-mode="simple"] input[type="text"],
+[data-mode="simple"] input[type="number"],
+[data-mode="simple"] select,
+[data-mode="simple"] textarea {
+  min-height: 36px;
+  font-size: 15px;
+}
+
+[data-mode="simple"] input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+}
+
+[data-mode="simple"] h2 {
+  font-size: 14px;
+  letter-spacing: 0.08em;
+}
+
+[data-mode="simple"] .field-label,
+[data-mode="simple"] .row-field > span {
+  font-size: 15px;
+  color: var(--text);
+}
+
+[data-mode="simple"] .field-hint,
+[data-mode="simple"] .hint,
+[data-mode="simple"] .stat-line,
+[data-mode="simple"] .warn,
+[data-mode="simple"] .help,
+[data-mode="simple"] .seam,
+[data-mode="simple"] .verdict,
+[data-mode="simple"] .metric,
+[data-mode="simple"] table.report,
+[data-mode="simple"] .back {
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+[data-mode="simple"] .hint,
+[data-mode="simple"] .field-hint {
+  color: var(--text-soft);
+}
+
+[data-mode="simple"] .report th {
+  font-size: 14px;
+}
+
+[data-mode="simple"] .back {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+}
+
+[data-mode="simple"] .seam {
+  min-height: 36px;
+  justify-content: center;
+}
+
+[data-mode="simple"] .lib-item {
+  min-height: 44px;
+}
+
+[data-mode="simple"] .lib-item strong,
+[data-mode="simple"] .tpl-item strong {
+  font-size: 15px;
+}
+
+[data-mode="simple"] .lib-item span,
+[data-mode="simple"] .tpl-item span {
+  font-size: 14px;
+}
+
+[data-mode="simple"] .lib-grid.one {
+  grid-template-columns: 1fr;
+}
+
+[data-mode="simple"] .lib-sec-toggle {
+  min-height: 36px;
+  font-size: 14px;
+}
+
+[data-mode="simple"] .lib-sec-count,
+[data-mode="simple"] .btn.tiny {
+  font-size: 14px;
+}
+
+[data-mode="simple"] .tpl-item {
+  min-height: 36px;
+}
+
+[data-mode="simple"] .statusbar {
+  height: 36px;
+  font-size: 15px;
+}
+
+[data-mode="simple"] .statusbar .status {
+  color: var(--text);
+}
+
+[data-mode="simple"] .cmd-prompt {
+  font-size: 13px;
+}
+
+[data-mode="simple"] .hud {
+  font-size: 15px;
+}
+
+[data-mode="simple"] .tip,
+[data-mode="simple"] .tip-type,
+[data-mode="simple"] .tip-off,
+[data-mode="simple"] .menu-item,
+[data-mode="simple"] .kbd {
+  font-size: 15px;
+}
+
+[data-mode="simple"] .menu-item {
+  min-height: 36px;
+}
+
+[data-mode="simple"] .modal-card h3,
+[data-mode="simple"] .tpl-dialog h3.tpl-cat {
+  font-size: 15px;
+}
+
+[data-mode="simple"] .choice span,
+[data-mode="simple"] .tpl-card span {
+  font-size: 15px;
+}
+
+/* Keyboard focus: a thick ring that shows on every theme. */
+[data-mode="simple"] :focus-visible {
+  outline: 3px solid var(--gold-hi);
+  outline-offset: 2px;
+}
+
+/* Everything in the right-hand panel wraps instead of running off the edge. */
+.property-editor,
+.property-editor .more-body {
+  overflow-wrap: anywhere;
+}
+
+.property-editor select {
+  max-width: 100%;
+  text-overflow: ellipsis;
+}
+
+.property-editor .btn-row > .btn {
+  max-width: 100%;
+}
+
+/* ---------- light theme touches ---------- */
+
+:root[data-theme="light"] .verdict.ok {
+  border-color: rgba(44, 100, 32, 0.45);
+  background: rgba(44, 100, 32, 0.08);
+}
+
+:root[data-theme="light"] .verdict.bad {
+  border-color: rgba(158, 42, 28, 0.45);
+  background: rgba(158, 42, 28, 0.07);
+}
+
+/* ---------- high contrast touches ---------- */
+
+:root[data-theme="contrast"] .wl-card,
+:root[data-theme="contrast"] .wl-tpl,
+:root[data-theme="contrast"] .easy3d-btn,
+:root[data-theme="contrast"] details.more {
+  border-color: #ffffff;
+}
+
+:root[data-theme="contrast"] .wl-pic,
+:root[data-theme="contrast"] .wl-thumb {
+  background: #ffffff;
+}
+
+:root[data-theme="contrast"] .step.next .step-num {
+  color: #000000;
+}
+
+:root[data-theme="contrast"] .hint,
+:root[data-theme="contrast"] .field-hint {
+  color: #ffffff;
+  font-style: normal;
+}
+
+/* Simple mode: the pieces list only takes the room it needs. */
+[data-mode="simple"] .browser {
+  flex: 0 1 auto;
+  max-height: 34%;
+  min-height: 120px;
+}
+
+/* At large text sizes the big buttons wrap onto a second row rather than hide off the edge. */
+[data-mode="simple"] .simplebar {
+  flex-wrap: wrap;
+  row-gap: 4px;
+  overflow-x: visible;
+}
+
+/* Window strips: the title keeps its line; the words after it give way first. */
+.win-head {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.win-sub {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.win-title,
+.win-btn {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* The big See it in 3D button sits in the middle of the 3D window, clear of the bars. */
+.easy3d.cta {
+  top: 0;
+  bottom: 0;
+  align-items: center;
+}
+
+/* While it shows, it says what to do; the hint box would only crowd it. */
+.w3d:has(.easy3d.cta:not(.hidden)) .hud {
+  display: none;
+}
+
+/* ---------- large sizes (150% and up) ---------- */
+
+/* Picture beside the words: picture above words takes too much height. */
+[data-mode="simple"] .rb-simple {
+  flex-direction: row;
+  gap: 6px;
+  min-height: 38px;
+  max-width: none;
+  padding: 4px 10px;
+}
+
+[data-mode="simple"] .rb-simple .rb-label {
+  white-space: nowrap;
+}
+
+[data-mode="simple"] .rb-simple .ico {
+  width: 20px;
+  height: 20px;
+}
+
+[data-mode="simple"][data-big="true"] .easy3d-cta small {
+  display: none;
+}
+
+[data-mode="simple"][data-big="true"] .easy3d-cta {
+  padding: 10px 18px;
+}
+
+[data-mode="simple"][data-big="true"] .win-sub {
+  display: none;
+}
+
+/* The floating zoom bars stay one row: they grow less than the rest (their words stay over 16 px). */
+[data-big="true"] .navbar {
+  zoom: 1.2;
+}
+
+[data-mode="simple"][data-big="true"] .navbar .rb-nav {
+  padding: 0 6px;
+}
+
+/* Simple mode: messages are never cut short. The status bar grows to two lines if it must, and
+   the command box (for typed commands, rarely used here) stays small. */
+[data-mode="simple"] .statusbar {
+  height: auto;
+  min-height: 46px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+[data-mode="simple"] .statusbar .status {
+  white-space: normal;
+  overflow: visible;
+  line-height: 1.3;
+}
+
+[data-mode="simple"] .statusbar .cmd-input {
+  width: 120px;
+  height: 32px;
+}
+
+[data-mode="simple"][data-big="true"] .statusbar .cmd-input {
+  width: 70px;
+}
+
+[data-mode="simple"][data-big="true"] .statusbar .info {
+  display: none;
+}
+
+/* The 3D buttons grow less than the rest so they fit a small 3D window. */
+[data-big="true"] .easy3d {
+  zoom: 1.25;
+}
+
+/* At 150% and more the bars are already large targets; they grow less (words still 19 px and
+   up) so the pattern, the 3D view and the panels keep their room. Panels, dialogs and messages
+   keep the full size. */
+[data-big="true"] .appbar,
+[data-big="true"] .simplebar,
+[data-big="true"] .win-head {
+  zoom: 1.3;
+}
+
+[data-big="true"] .statusbar {
+  zoom: 1.5;
+}
+
+[data-mode="simple"][data-big="true"] .viewcube-home {
+  zoom: 1.2;
+}

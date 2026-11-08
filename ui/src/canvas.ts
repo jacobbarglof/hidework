@@ -1,10 +1,18 @@
 // The drafting table: draws the pattern on parchment and handles mouse editing.
 
-import { computedPiece, edit, notify, piece, placing, selectedPieceId, setStatus, snapshot, changed, state, subscribe, uid } from "./store";
+import { computedPiece, edit, isMulti, notify, piece, placing, selectPieces, selectedPieceId, selectedPieceIds, setStatus, snapshot, changed, state, subscribe, uid } from "./store";
 import { canvasPng } from "./dom";
-import { dist, edgePoints, insertVertex, midpoint, rectPiece, toDesign } from "./ops";
+import { snap as grid } from "./editing";
+import { dist, edgePoints, insertVertex, midpoint, polygonTouchesBox, toDesign } from "./ops";
 import { snapStep } from "./units";
-import type { ComputedPiece, Piece, V } from "./types";
+import { cancelShape, drawDouble, drawDown, drawing, drawMove, drawUp, fmt, initDraw, paintDraw } from "./drawtools";
+import { initEdgeBox, place as placeEdgeBox } from "./edgebox";
+import { simple } from "./prefs";
+import { bendEdge, edgeLength, edgeMiddle, moveEdge, outlineCopy, segmentLength } from "./shapeops";
+import { drawSnapHit, smartSnap, snapMove, type SnapHit } from "./smartsnap";
+import type { Edge } from "./types";
+import { addStroke, faceDepth, flatten, hooks as toolingHooks, impressions, isSelectedStroke, newStroke, paintStroke, placeDesign, pointInPolygon, selectedStrokes, simplify, strokes, strokeSize, toStaged, tooling as toolingArm, toolingOpen } from "./tooling";
+import type { ComputedPiece, Piece, ToolingStroke, V } from "./types";
 
 const INK = "#2b1d0e";
 const OXBLOOD = "#7a1f1a";
@@ -20,80 +28,297 @@ let spaceDown = false;
 
 type Drag =
   | { kind: "pan"; sx: number; sy: number; ox: number; oy: number }
-  | { kind: "piece"; id: string; start: V; orig: V; moved: boolean }
+  | { kind: "pieces"; ids: string[]; start: V; origs: V[]; moved: boolean }
+  | { kind: "box"; a: V; b: V; base: string[] }
   | { kind: "vertex"; id: string; index: number; start: V; orig: V; moved: boolean }
   | { kind: "ctrl"; id: string; edge: number; which: 0 | 1; start: V; orig: V; moved: boolean }
+  | { kind: "edge"; id: string; edge: number; start: V; orig: { vertices: V[]; edges: Edge[] }; moved: boolean }
+  | { kind: "bend"; id: string; edge: number; start: V; orig: Edge; moved: boolean }
   | { kind: "hole"; id: string; hid: string; start: V; orig: V; moved: boolean }
   | { kind: "fold"; id: string; fid: string; start: V; orig: number; moved: boolean }
   | { kind: "hardware"; id: string; hid: string; start: V; orig: V; moved: boolean }
-  | { kind: "mark"; id: string; mid: string; start: V; orig: V; moved: boolean };
+  | { kind: "mark"; id: string; mid: string; start: V; orig: V; moved: boolean }
+  | { kind: "tooling"; id: string; sids: string[]; start: V; origs: V[][]; moved: boolean };
 let drag: Drag | null = null;
 let measure: { a: V; b: V; active: boolean } | null = null;
-let drawRect: { a: V; b: V } | null = null;
-let poly: V[] = [];
+/** What the pointer snapped to while reshaping or moving a piece (shown with a marker and a word). */
+let editHit: SnapHit | null = null;
+/** A tooling line being drawn: points in piece design mm; `down` while the button is held. */
+let tdraft: { piece: string; pts: V[]; free: boolean; down: V | null } | null = null;
+/** A tooling box being dragged (fills and boxed designs), world mm. */
+let tbox: { piece: string | null; a: V; b: V } | null = null;
 
-function snapPoint(w: V, e: MouseEvent): V {
-  return { x: snap(w.x, e), y: snap(w.y, e) };
+/** The modifier keys that change snapping (a mouse event, or the keys last seen). */
+type Mods = { shiftKey: boolean; altKey: boolean };
+let mods: Mods = { shiftKey: false, altKey: false };
+
+/** Snap a piece-local design point. With grid snap on, the grid is the drawn (world) grid, so
+ * the point lands on a grid line even when the piece itself sits off the grid. */
+function snapLocal(p: V, pos: V, e: Mods): V {
+  if (!gridOn(e)) return { x: snap(p.x, e), y: snap(p.y, e) };
+  return { x: snap(pos.x + p.x, e) - pos.x, y: snap(pos.y + p.y, e) - pos.y };
 }
 
-function finishPolygon(): void {
-  if (poly.length < 3) {
-    poly = [];
-    requestDraw();
-    return;
-  }
-  const minX = Math.min(...poly.map((p) => p.x));
-  const minY = Math.min(...poly.map((p) => p.y));
-  const pc = rectPiece({ x: minX, y: minY }, 1, 1, "Panel");
-  pc.vertices = poly.map((p) => ({ x: p.x - minX, y: p.y - minY }));
-  pc.edges = poly.map(() => ({ type: "line", stitched: false }));
-  poly = [];
-  edit((p) => p.pieces.push(pc));
-  state.sel = { kind: "piece", piece: pc.id };
-  state.tool = "select";
-  setStatus("Polygon piece added. Double-click edges to add points; drag points to shape it.");
+/** Grid snap applies: switched on, and neither Shift (place freely) nor Alt (fine) held. */
+function gridOn(e: Mods): boolean {
+  return grid.on && !e.shiftKey && !e.altKey;
+}
+
+/** Snap a fold position (piece-local, along one axis whose piece offset is `pos`). */
+function foldSnap(v: number, pos: number, e: Mods): number {
+  return gridOn(e) ? snap(pos + v, e) - pos : snap(v, e);
 }
 
 export function cancelDrawing(): void {
-  poly = [];
-  drawRect = null;
+  cancelShape();
+  editHit = null;
+  finishTooling();
   requestDraw();
 }
 
-function drawPending(): void {
-  ctx.strokeStyle = OXBLOOD;
-  ctx.lineWidth = 1.5;
-  ctx.setLineDash([5, 3]);
-  if (drawRect) {
-    const a = toScreen(drawRect.a);
-    const b = toScreen(drawRect.b);
-    ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
-    const w = Math.abs(drawRect.b.x - drawRect.a.x);
-    const hgt = Math.abs(drawRect.b.y - drawRect.a.y);
-    ctx.fillStyle = OXBLOOD;
-    ctx.font = "600 13px 'EB Garamond', serif";
-    ctx.fillText(`${w.toFixed(1)} × ${hgt.toFixed(1)} mm`, Math.max(a.x, b.x) + 6, Math.max(a.y, b.y) + 14);
-  }
-  if (poly.length) {
-    ctx.beginPath();
-    poly.forEach((p, i) => {
-      const s = toScreen(p);
-      if (i === 0) ctx.moveTo(s.x, s.y);
-      else ctx.lineTo(s.x, s.y);
-    });
-    if (hoverWorld) {
-      const s = toScreen(hoverWorld);
-      ctx.lineTo(s.x, s.y);
-    }
-    ctx.stroke();
-    for (const p of poly) {
-      const s = toScreen(p);
-      ctx.fillStyle = GOLD;
-      ctx.fillRect(s.x - 3, s.y - 3, 6, 6);
-    }
-  }
-  ctx.setLineDash([]);
+// ---------- tooling (see tooling.ts) ----------
+
+/** Finish a half-drawn tooling line (kept if it has two points) or drop a box. True if anything was pending. */
+function finishTooling(): boolean {
+  const had = !!tdraft || !!tbox;
+  if (tdraft) finishDraft(false);
+  tbox = null;
+  if (had) requestDraw();
+  return had;
 }
+toolingHooks.finish = finishTooling;
+
+/** A world point as a snapped design point on piece `pc`. */
+function localPoint(pc: Piece, w: V, e: Mods): V {
+  return snapLocal(rawLocal(pc, w), pc.position, e);
+}
+
+function rawLocal(pc: Piece, w: V): V {
+  return toDesign(computedPiece(pc.id), { x: w.x - pc.position.x, y: w.y - pc.position.y });
+}
+
+function finishDraft(close: boolean): void {
+  const d = tdraft;
+  tdraft = null;
+  const pc = d && piece(d.piece);
+  if (!d || !pc) return;
+  let pts = d.pts;
+  let closed = close;
+  if (d.free) {
+    pts = simplify(pts, Math.max(0.25, 1.5 / view.scale));
+    if (pts.length >= 4 && dist(pts[0], pts[pts.length - 1]) * view.scale < 14) {
+      pts.pop();
+      closed = true;
+    }
+    if (gridOn(mods) && pts.length) {
+      pts[0] = snapLocal(pts[0], pc.position, mods);
+      if (!closed) pts[pts.length - 1] = snapLocal(pts[pts.length - 1], pc.position, mods);
+    }
+  }
+  pts = pts.filter((p, i) => i === 0 || dist(p, pts[i - 1]) > 0.05);
+  if (pts.length < 2) {
+    requestDraw();
+    return;
+  }
+  const kind = toolingArm.how === "cut" ? "cut" : "line";
+  addStroke(d.piece, newStroke(kind, pts, { smooth: pts.length > 2, closed }));
+  setStatus(`${kind === "cut" ? "Cut line" : "Row of stamps"} added. Draw another, or press Esc when you are done.`);
+}
+
+function toolingDown(w: V, e: MouseEvent): void {
+  const design = toolingArm.design;
+  const how = toolingArm.how;
+  const boxed = design === "basketweave" || design === "checkerboard" || design === "diamond" || (!design && how === "fill");
+  if (!design && (how === "cut" || how === "line")) {
+    if (tdraft) {
+      const pc = piece(tdraft.piece);
+      if (!pc) {
+        tdraft = null;
+        return;
+      }
+      const p = localPoint(pc, w, e);
+      // Clicking the first point again closes the shape.
+      const first = toScreen(addV(toStaged(computedPiece(pc.id), tdraft.pts[0]), pc.position));
+      const here = toScreen(w);
+      if (tdraft.pts.length >= 3 && Math.hypot(first.x - here.x, first.y - here.y) < 10) {
+        finishDraft(true);
+        return;
+      }
+      tdraft.pts.push(p);
+      tdraft.down = w;
+      requestDraw();
+      return;
+    }
+    const id = hitPiece(w);
+    if (!id) return setStatus("Start on a piece of leather.");
+    tdraft = { piece: id, pts: [localPoint(piece(id)!, w, e)], free: false, down: w };
+    requestDraw();
+    return;
+  }
+  if (boxed) {
+    tbox = { piece: hitPiece(w), a: w, b: w };
+    requestDraw();
+    return;
+  }
+  const id = hitPiece(w);
+  if (!id) return setStatus("Click on a piece of leather.");
+  const pc = piece(id)!;
+  const p = localPoint(pc, w, e);
+  if (design) {
+    void placeDesign(id, p);
+  } else if (how === "letters") {
+    if (!toolingArm.text.trim()) return setStatus("Type the letters to stamp in the Tooling panel first.");
+    addStroke(id, newStroke("letters", [p], { text: toolingArm.text }));
+    setStatus("Letters stamped. Click again for more, or press Esc when you are done.");
+  } else {
+    addStroke(id, newStroke("stamp", [p]));
+    setStatus("Stamped. Keep clicking to strike more, or press Esc when you are done.");
+  }
+}
+
+function finishBox(): void {
+  const b = tbox;
+  tbox = null;
+  requestDraw();
+  if (!b) return;
+  const id = b.piece ?? hitPiece(b.b);
+  if (!id) return setStatus("Drag over a piece of leather.");
+  const pc = piece(id)!;
+  const sa = toScreen(b.a);
+  const sb = toScreen(b.b);
+  const design = toolingArm.design;
+  if (Math.hypot(sb.x - sa.x, sb.y - sa.y) < 6) {
+    // A click, not a drag.
+    if (design) return void placeDesign(id, localPoint(pc, b.a, mods));
+    const local = rawLocal(pc, b.a);
+    const loop = strokes(pc).filter((s) => s.kind === "cut" && s.closed).reverse().find((s) => pointInPolygon(local, flatten(s)));
+    if (!loop) return setStatus("Drag a box over the area to fill, or click inside a closed cut line.");
+    addStroke(id, newStroke("fill", loop.points.map((q) => ({ ...q })), { smooth: loop.smooth, closed: true }));
+    setStatus("Filled. Do another, or press Esc when you are done.");
+    return;
+  }
+  const a = localPoint(pc, b.a, mods);
+  const c = localPoint(pc, b.b, mods);
+  const min = { x: Math.min(a.x, c.x), y: Math.min(a.y, c.y) };
+  const max = { x: Math.max(a.x, c.x), y: Math.max(a.y, c.y) };
+  if (max.x - min.x < 2 || max.y - min.y < 2) return;
+  if (design) return void placeDesign(id, { x: (min.x + max.x) / 2, y: (min.y + max.y) / 2 }, { min, max });
+  addStroke(id, newStroke("fill", [min, { x: max.x, y: min.y }, max, { x: min.x, y: max.y }], { closed: true }));
+  setStatus("Filled. Drag another box, or press Esc when you are done.");
+}
+
+function drawToolingDraft(): void {
+  if (tdraft) {
+    const pc = piece(tdraft.piece);
+    const cp = computedPiece(tdraft.piece);
+    if (pc) {
+      ctx.strokeStyle = OXBLOOD;
+      ctx.lineWidth = 2;
+      ctx.setLineDash(tdraft.free ? [] : [5, 3]);
+      ctx.beginPath();
+      tdraft.pts.forEach((p, i) => {
+        const q = toScreen(addV(toStaged(cp, p), pc.position));
+        if (i === 0) ctx.moveTo(q.x, q.y);
+        else ctx.lineTo(q.x, q.y);
+      });
+      if (!tdraft.free && hoverWorld) {
+        const q = toScreen(hoverWorld);
+        ctx.lineTo(q.x, q.y);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if (!tdraft.free) {
+        for (const p of tdraft.pts) {
+          const q = toScreen(addV(toStaged(cp, p), pc.position));
+          ctx.fillStyle = GOLD;
+          ctx.fillRect(q.x - 4, q.y - 4, 8, 8);
+        }
+      }
+    }
+  }
+  if (tbox) {
+    const a = toScreen(tbox.a);
+    const b = toScreen(tbox.b);
+    ctx.fillStyle = "rgba(122,31,26,0.10)";
+    ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+    ctx.strokeStyle = OXBLOOD;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 3]);
+    ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+    ctx.setLineDash([]);
+  }
+}
+
+/** Tooling on a piece: cuts as thin dark lines, stamps as their impressions, clipped to the leather. */
+function drawTooling(pc: Piece, cp: ComputedPiece, off: V): void {
+  const list = pc.tooling ?? [];
+  if (!list.length) return;
+  const map = (p: V): V => addV(toStaged(cp, p), off);
+  ctx.save();
+  path(cp.cut, off, true);
+  ctx.clip();
+  ctx.translate(view.ox, view.oy);
+  for (const st of list) paintStroke(ctx, st, view.scale, map, isSelectedStroke(pc.id, st));
+  ctx.restore();
+  // The selected line's path and points.
+  const cur = selectedStrokes();
+  if (!cur || cur.pc.id !== pc.id) return;
+  for (const st of cur.group) {
+    if (st.kind !== "fill" && st.kind !== "line") continue;
+    const pts = flatten(st).map((p) => toScreen(map(p)));
+    ctx.strokeStyle = OXBLOOD;
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([5, 3]);
+    ctx.beginPath();
+    pts.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+    if (st.closed || st.kind === "fill") ctx.closePath();
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  if (cur.group.length === 1) {
+    for (const p of cur.s.points) {
+      const q = toScreen(map(p));
+      ctx.fillStyle = GOLD;
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 1;
+      ctx.fillRect(q.x - 3.5, q.y - 3.5, 7, 7);
+      ctx.strokeRect(q.x - 3.5, q.y - 3.5, 7, 7);
+    }
+  }
+}
+
+/** The tooling stroke under a world point (lines and stamps before filled areas). */
+function hitStroke(w: V): { piece: string; id: string } | null {
+  const tol = 6 / view.scale;
+  for (const fills of [false, true]) {
+    for (const pc of [...state.project.pieces].reverse()) {
+      const list = pc.tooling ?? [];
+      if (!list.length) continue;
+      const cp = computedPiece(pc.id);
+      const local = { x: w.x - pc.position.x, y: w.y - pc.position.y };
+      for (const st of [...list].reverse()) {
+        if ((st.kind === "fill") !== fills) continue;
+        if (strokeHit(st, cp, local, tol)) return { piece: pc.id, id: st.id };
+      }
+    }
+  }
+  return null;
+}
+
+function strokeHit(st: ToolingStroke, cp: ComputedPiece | undefined, p: V, tol: number): boolean {
+  const stage = (q: V) => toStaged(cp, q);
+  if (st.kind === "fill") return pointInPolygon(p, flatten(st).map(stage));
+  if (st.kind === "cut" || st.kind === "line") {
+    const pts = flatten(st).map(stage);
+    if (st.closed && pts.length > 2) pts.push(pts[0]);
+    const reach = Math.max(tol, st.kind === "line" ? faceDepth(st.tool, strokeSize(st)) : strokeSize(st) / 2);
+    for (let i = 0; i + 1 < pts.length; i++) if (segDist(p, pts[i], pts[i + 1]) < reach) return true;
+    if (st.kind === "cut") return false;
+  }
+  const r = Math.max(tol, strokeSize(st) / 2);
+  return impressions(st).some((imp) => dist(stage(imp.at), p) < r);
+}
+
 
 /** PNG of the pattern canvas (base64, no data: prefix). */
 export function captureCanvas(): string {
@@ -187,6 +412,9 @@ export function initCanvas(el: HTMLCanvasElement): void {
   el.addEventListener("dblclick", onDouble);
   el.addEventListener("wheel", onWheel, { passive: false });
   el.addEventListener("contextmenu", (e) => e.preventDefault());
+  const host = { el, ctx: () => ctx, toScreen, scale: () => view.scale, redraw: requestDraw };
+  initDraw(host);
+  initEdgeBox(host);
   window.addEventListener("keydown", (e) => {
     if (e.code === "Space" && !isTyping()) spaceDown = true;
   });
@@ -228,6 +456,14 @@ export function viewCenter(): V {
   return toWorld(r.width / 2, r.height / 2);
 }
 
+/** The part of the pattern currently visible in the 2D window (null before the canvas exists). */
+export function viewRect(): { min: V; max: V } | null {
+  if (!cv) return null;
+  const r = cv.getBoundingClientRect();
+  if (r.width < 1 || r.height < 1) return null;
+  return { min: toWorld(0, 0), max: toWorld(r.width, r.height) };
+}
+
 // ---------- drawing ----------
 
 function path(pts: V[], off: V, closed: boolean): void {
@@ -249,8 +485,10 @@ function drawBackground(w: number, h: number): void {
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, w, h);
   const inch = state.project.units === "in";
-  const major = inch ? 25.4 : 50;
-  const minor = inch ? 25.4 / 4 : 10;
+  // With grid snap on the grid shows the snap spacing, with a heavier line every 10 (every 5 for
+  // grids of 10 mm and up).
+  const major = grid.on ? grid.gridMm * (grid.gridMm >= 10 ? 5 : 10) : inch ? 25.4 : 50;
+  const minor = grid.on ? grid.gridMm : inch ? 25.4 / 4 : 10;
   const tl = toWorld(0, 0);
   const br = toWorld(w, h);
   const lines = (step: number, color: string) => {
@@ -270,8 +508,8 @@ function drawBackground(w: number, h: number): void {
     }
     ctx.stroke();
   };
-  lines(minor, "rgba(110,75,40,0.10)");
-  lines(major, "rgba(110,75,40,0.22)");
+  lines(minor, grid.on ? "rgba(110,75,40,0.16)" : "rgba(110,75,40,0.10)");
+  lines(major, grid.on ? "rgba(110,75,40,0.30)" : "rgba(110,75,40,0.22)");
 }
 
 function fillFor(pc: Piece): string {
@@ -412,6 +650,7 @@ function drawPiece(pc: Piece, cp: ComputedPiece, selected: boolean): void {
     ctx.stroke();
   }
   drawMarks(pc, cp, off);
+  drawTooling(pc, cp, off);
   drawHardware(pc, cp, off);
   // Name.
   const c = toScreen(addV({ x: (cp.bounds.min.x + cp.bounds.max.x) / 2, y: (cp.bounds.min.y + cp.bounds.max.y) / 2 }, off));
@@ -562,6 +801,7 @@ function drawSelection(pc: Piece, cp: ComputedPiece): void {
       }
     }
   }
+  drawEdgeInfo(pc, cp);
   cp.vertices.forEach((v, i) => {
     const p = toScreen(addV(v, pc.position));
     const active = sel.kind === "vertex" && sel.index === i;
@@ -575,6 +815,73 @@ function drawSelection(pc: Piece, cp: ComputedPiece): void {
     ctx.strokeRect(-4, -4, 8, 8);
     ctx.restore();
   });
+}
+
+/** Where the middle of design edge `i` is drawn (world mm). */
+function edgeMidWorld(pc: Piece, cp: ComputedPiece, i: number): V {
+  return addV(toStaged(cp, edgeMiddle(pc, i)), pc.position);
+}
+
+/** The selected piece's edge lengths, and the round handle in the middle of each edge that bends it. */
+function drawEdgeInfo(pc: Piece, cp: ComputedPiece): void {
+  const n = pc.vertices.length;
+  if (n !== cp.vertices.length) return;
+  const sel = state.sel;
+  const live = new Set<number>();
+  if (drag && (drag.kind === "edge" || drag.kind === "bend") && drag.id === pc.id) live.add(drag.edge);
+  if (drag?.kind === "vertex" && drag.id === pc.id) {
+    live.add(drag.index);
+    live.add((drag.index - 1 + n) % n);
+  }
+  if (sel.kind === "edge" && sel.piece === pc.id) live.add(sel.index);
+  const centre = toScreen(addV({ x: (cp.bounds.min.x + cp.bounds.max.x) / 2, y: (cp.bounds.min.y + cp.bounds.max.y) / 2 }, pc.position));
+  const size = simple() ? 15 : 13;
+  for (let i = 0; i < n; i++) {
+    const a = toScreen(addV(cp.vertices[i], pc.position));
+    const b = toScreen(addV(cp.vertices[(i + 1) % n], pc.position));
+    const m = toScreen(edgeMidWorld(pc, cp, i));
+    const chord = Math.hypot(b.x - a.x, b.y - a.y);
+    const strong = live.has(i);
+    // The bend handle.
+    if (chord > 24) {
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, strong ? 5.5 : 4.5, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(246,236,211,0.95)";
+      ctx.fill();
+      ctx.strokeStyle = strong ? OXBLOOD : GOLD;
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+    }
+    if (chord < 44 && !strong) continue;
+    // The length, just outside the edge.
+    let nx = -(b.y - a.y) / (chord || 1);
+    let ny = (b.x - a.x) / (chord || 1);
+    if ((m.x - centre.x) * nx + (m.y - centre.y) * ny < 0) {
+      nx = -nx;
+      ny = -ny;
+    }
+    const text = fmt(edgeLength(pc, i));
+    ctx.font = `${strong ? 700 : 600} ${size}px 'EB Garamond', serif`;
+    const tw = ctx.measureText(text).width;
+    const off = 14 + Math.abs(nx) * (tw / 2) + Math.abs(ny) * (size / 2);
+    const x = m.x + nx * off;
+    const y = m.y + ny * off;
+    ctx.fillStyle = strong ? "rgba(255,248,230,0.96)" : "rgba(255,248,230,0.8)";
+    ctx.beginPath();
+    ctx.roundRect(x - tw / 2 - 4, y - size / 2 - 3, tw + 8, size + 6, 4);
+    ctx.fill();
+    if (strong) {
+      ctx.strokeStyle = OXBLOOD;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    ctx.fillStyle = strong ? OXBLOOD : "rgba(43,29,14,0.85)";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, x, y + 1);
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+  }
 }
 
 function drawJoins(): void {
@@ -624,9 +931,8 @@ function drawFoldPreview(): void {
   const cp = computedPiece(hit)!;
   const b = cp.bounds;
   const local = { x: hoverWorld.x - pc.position.x, y: hoverWorld.y - pc.position.y };
-  const step = snapStep(state.project.units);
   const horiz = state.foldOrientation === "horizontal";
-  const c = Math.round((horiz ? local.y : local.x) / step) * step;
+  const c = foldSnap(horiz ? local.y : local.x, horiz ? pc.position.y : pc.position.x, mods);
   const seg: V[] = horiz ? [{ x: b.min.x, y: c }, { x: b.max.x, y: c }] : [{ x: c, y: b.min.y }, { x: c, y: b.max.y }];
   path(seg, pc.position, false);
   ctx.strokeStyle = OXBLOOD;
@@ -645,10 +951,11 @@ function draw(): void {
   drawBackground(w, h);
   const comp = state.computed;
   if (!comp) return;
-  const selId = selectedPieceId();
+  const selId = isMulti() ? null : selectedPieceId();
+  const selected = new Set(selectedPieceIds());
   for (const pc of state.project.pieces) {
     const cp = computedPiece(pc.id);
-    if (cp) drawPiece(pc, cp, pc.id === selId);
+    if (cp) drawPiece(pc, cp, selected.has(pc.id));
   }
   drawJoins();
   if (hover) {
@@ -668,8 +975,12 @@ function draw(): void {
   }
   drawFoldPreview();
   drawMeasure();
-  drawPending();
+  drawToolingDraft();
+  drawBox();
+  if (drag && editHit) drawSnapHit(ctx, editHit, toScreen, simple());
+  paintDraw();
   drawScaleBar(w, h);
+  placeEdgeBox();
 }
 
 function drawScaleBar(_w: number, h: number): void {
@@ -739,8 +1050,9 @@ function hitEdge(w: V, only?: string): { piece: string; edge: number } | null {
   return best ? { piece: best.piece, edge: best.edge } : null;
 }
 
-function hitHandle(w: V): { kind: "vertex"; index: number } | { kind: "ctrl"; edge: number; which: 0 | 1 } | null {
-  const id = selectedPieceId();
+function hitHandle(w: V): { kind: "vertex"; index: number } | { kind: "ctrl"; edge: number; which: 0 | 1 } | { kind: "bend"; edge: number } | null {
+  // Corner handles show (and grab) only with a single piece selected.
+  const id = isMulti() ? null : selectedPieceId();
   if (!id) return null;
   const pc = piece(id)!;
   const cp = computedPiece(id);
@@ -754,6 +1066,14 @@ function hitHandle(w: V): { kind: "vertex"; index: number } | { kind: "ctrl"; ed
     }
   }
   for (let i = 0; i < cp.vertices.length; i++) if (dist(w, addV(cp.vertices[i], pc.position)) < tol) return { kind: "vertex", index: i };
+  // The round handle in the middle of each edge (shown on edges long enough to have one).
+  if (cp.vertices.length === pc.vertices.length) {
+    const n = pc.vertices.length;
+    for (let i = 0; i < n; i++) {
+      const chord = dist(cp.vertices[i], cp.vertices[(i + 1) % n]) * view.scale;
+      if (chord > 24 && dist(w, edgeMidWorld(pc, cp, i)) < tol) return { kind: "bend", edge: i };
+    }
+  }
   return null;
 }
 
@@ -816,8 +1136,34 @@ function eventWorld(e: MouseEvent): V {
   return toWorld(e.clientX - r.left, e.clientY - r.top);
 }
 
-function snap(v: number, e: MouseEvent): number {
+/** Right-click (marking menu): select what is under a screen point, as a click would but without
+ * dragging, and say what it is. A piece inside a multi-selection keeps the multi-selection. */
+export function selectAt(clientX: number, clientY: number): "piece" | "multi" | "edge" | "vertex" | "hole" | "fold" | "hardware" | "none" {
+  const w = eventWorld({ clientX, clientY } as MouseEvent);
+  const id = selectedPieceId();
+  const hd = hitHandle(w);
+  const hw = hitHardware(w);
+  const hole = hitHole(w);
+  const fold = hitFold(w);
+  const edge = hitEdge(w);
+  const pid = hitPiece(w);
+  let kind: ReturnType<typeof selectAt> = "none";
+  if (hd && id && hd.kind === "vertex") (state.sel = { kind: "vertex", piece: id, index: hd.index }), (kind = "vertex");
+  else if (hw) (state.sel = { kind: "hardware", piece: hw.piece, id: hw.id }), (kind = "hardware");
+  else if (hole) (state.sel = { kind: "hole", piece: hole.piece, id: hole.id }), (kind = "hole");
+  else if (fold) (state.sel = { kind: "fold", piece: fold.piece, id: fold.id }), (kind = "fold");
+  else if (edge) (state.sel = { kind: "edge", piece: edge.piece, index: edge.edge }), (kind = "edge");
+  else if (pid && isMulti() && selectedPieceIds().includes(pid)) kind = "multi";
+  else if (pid) (state.sel = { kind: "piece", piece: pid }), (kind = "piece");
+  else state.sel = { kind: "none" };
+  notify();
+  return kind;
+}
+
+/** Alt: free to 0.01 mm. Grid snap on (and no Shift): the snap grid. Otherwise half a millimetre (1/32 in). */
+function snap(v: number, e: Mods): number {
   if (e.altKey) return Math.round(v * 100) / 100;
+  if (gridOn(e)) return Math.round(v / grid.gridMm) * grid.gridMm;
   const step = snapStep(state.project.units);
   return Math.round(v / step) * step;
 }
@@ -830,16 +1176,12 @@ function onDown(e: MouseEvent): void {
     return;
   }
   if (e.button !== 0) return;
-  if (state.tool === "rect") {
-    const p = snapPoint(w, e);
-    drawRect = { a: p, b: p };
+  if (state.tool === "tooling") {
+    toolingDown(w, e);
     return;
   }
-  if (state.tool === "polygon") {
-    const p = snapPoint(w, e);
-    if (poly.length >= 3 && dist(p, poly[0]) * view.scale < 10) finishPolygon();
-    else poly.push(p);
-    requestDraw();
+  if (drawing()) {
+    drawDown(w, e);
     return;
   }
   if (state.tool === "measure") {
@@ -853,7 +1195,7 @@ function onDown(e: MouseEvent): void {
     if (!id) return;
     const pc = piece(id)!;
     const d = toDesign(computedPiece(id), { x: w.x - pc.position.x, y: w.y - pc.position.y });
-    const at = { x: snap(d.x, e), y: snap(d.y, e) };
+    const at = snapLocal(d, pc.position, e);
     if (state.tool === "hardware") {
       const hid = uid("hw");
       edit(() => (pc.hardware = [...(pc.hardware ?? []), { id: hid, kind: placing.kind, at, angleDeg: 0, sizeMm: 0 }]));
@@ -875,12 +1217,12 @@ function onDown(e: MouseEvent): void {
     if (state.tool === "hole") {
       const hid = uid("h");
       const hw = placing.hardware;
-      edit(() => pc.holes.push({ id: hid, center: { x: snap(d.x, e), y: snap(d.y, e) }, diameterMm: hw?.diameterMm ?? 3, label: hw?.label ?? "", lengthMm: hw?.lengthMm ?? 0, angleDeg: 0 }));
+      edit(() => pc.holes.push({ id: hid, center: snapLocal(d, pc.position, e), diameterMm: hw?.diameterMm ?? 3, label: hw?.label ?? "", lengthMm: hw?.lengthMm ?? 0, angleDeg: 0 }));
       state.sel = { kind: "hole", piece: id, id: hid };
     } else {
       const fid = uid("f");
       const horiz = state.foldOrientation === "horizontal";
-      edit(() => pc.folds.push({ id: fid, orientation: state.foldOrientation, position: snap(horiz ? d.y : d.x, e), contentsMm: 0 }));
+      edit(() => pc.folds.push({ id: fid, orientation: state.foldOrientation, position: foldSnap(horiz ? d.y : d.x, horiz ? pc.position.y : pc.position.x, e), contentsMm: 0 }));
       state.sel = { kind: "fold", piece: id, id: fid };
       state.tool = "select";
     }
@@ -905,7 +1247,30 @@ function onDown(e: MouseEvent): void {
     notify();
     return;
   }
-  // Select tool.
+  // Select tool. Shift or Ctrl+click adds a piece to the selection or takes it out (then drags
+  // the selection); on empty paper it starts a drag box that adds to the selection.
+  const picked = selectedPieceIds();
+  if (e.shiftKey || e.ctrlKey || e.metaKey) {
+    const pid = hitPiece(w);
+    if (pid) {
+      const next = picked.includes(pid) ? picked.filter((x) => x !== pid) : [...picked, pid];
+      selectPieces(next);
+      if (next.includes(pid)) dragPieces(pid, next, w);
+    } else {
+      drag = { kind: "box", a: w, b: w, base: picked };
+    }
+    notify();
+    return;
+  }
+  // With several pieces selected, grabbing any of them moves them all.
+  if (picked.length > 1) {
+    const pid = hitPiece(w);
+    if (pid && picked.includes(pid)) {
+      dragPieces(pid, picked, w);
+      notify();
+      return;
+    }
+  }
   const h = hitHandle(w);
   const id = selectedPieceId();
   if (h && id) {
@@ -913,6 +1278,10 @@ function onDown(e: MouseEvent): void {
     if (h.kind === "vertex") {
       state.sel = { kind: "vertex", piece: id, index: h.index };
       drag = { kind: "vertex", id, index: h.index, start: w, orig: { ...pc.vertices[h.index] }, moved: false };
+    } else if (h.kind === "bend") {
+      state.sel = { kind: "edge", piece: id, index: h.edge };
+      drag = { kind: "bend", id, edge: h.edge, start: w, orig: JSON.parse(JSON.stringify(pc.edges[h.edge])), moved: false };
+      setStatus("Drag the round handle to bend this edge into a curve. Drag it back to make it straight again.");
     } else {
       const edge = pc.edges[h.edge];
       if (edge.type === "cubic") {
@@ -935,6 +1304,15 @@ function onDown(e: MouseEvent): void {
     state.sel = { kind: "hole", piece: hole.piece, id: hole.id };
     const hd = piece(hole.piece)!.holes.find((x) => x.id === hole.id)!;
     drag = { kind: "hole", id: hole.piece, hid: hole.id, start: w, orig: { ...hd.center }, moved: false };
+    notify();
+    return;
+  }
+  // Tooling: clickable directly while the Tooling panel is open, otherwise once its piece is selected.
+  const ts = hitStroke(w);
+  if (ts && (toolingOpen() || selectedPieceId() === ts.piece)) {
+    state.sel = { kind: "tooling", piece: ts.piece, id: ts.id };
+    const cur = selectedStrokes();
+    if (cur) drag = { kind: "tooling", id: ts.piece, sids: cur.group.map((x) => x.id), start: w, origs: cur.group.map((x) => x.points.map((q) => ({ ...q }))), moved: false };
     notify();
     return;
   }
@@ -962,7 +1340,9 @@ function onDown(e: MouseEvent): void {
   if (id) {
     const edge = hitEdge(w, id);
     if (edge) {
+      // Click selects the edge (and shows its length box); dragging moves the whole edge.
       state.sel = { kind: "edge", piece: id, index: edge.edge };
+      drag = { kind: "edge", id, edge: edge.edge, start: w, orig: outlineCopy(piece(id)!), moved: false };
       notify();
       return;
     }
@@ -970,11 +1350,45 @@ function onDown(e: MouseEvent): void {
   const pid = hitPiece(w);
   if (pid) {
     state.sel = { kind: "piece", piece: pid };
-    drag = { kind: "piece", id: pid, start: w, orig: { ...piece(pid)!.position }, moved: false };
+    dragPieces(pid, [pid], w);
   } else {
+    // Empty paper: clear the selection and start a drag box.
     state.sel = { kind: "none" };
+    drag = { kind: "box", a: w, b: w, base: [] };
   }
   notify();
+}
+
+/** Start moving `ids` with the mouse; `lead` (the piece grabbed) is the one that snaps. */
+function dragPieces(lead: string, ids: string[], w: V): void {
+  const order = [lead, ...ids.filter((x) => x !== lead)].filter((x) => !!piece(x));
+  drag = { kind: "pieces", ids: order, start: w, origs: order.map((x) => ({ ...piece(x)!.position })), moved: false };
+}
+
+/** Pieces whose outline (as drawn) touches the box between two world points. */
+function piecesInBox(a: V, b: V): string[] {
+  const min = { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y) };
+  const max = { x: Math.max(a.x, b.x), y: Math.max(a.y, b.y) };
+  return state.project.pieces
+    .filter((pc) => {
+      const cp = computedPiece(pc.id);
+      return !!cp && polygonTouchesBox(cp.cut.map((p) => addV(p, pc.position)), min, max);
+    })
+    .map((pc) => pc.id);
+}
+
+function drawBox(): void {
+  if (drag?.kind !== "box") return;
+  const a = toScreen(drag.a);
+  const b = toScreen(drag.b);
+  if (Math.hypot(b.x - a.x, b.y - a.y) < 3) return;
+  ctx.fillStyle = "rgba(176,138,62,0.10)";
+  ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+  ctx.strokeStyle = OXBLOOD;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 3]);
+  ctx.strokeRect(Math.min(a.x, b.x) + 0.5, Math.min(a.y, b.y) + 0.5, Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+  ctx.setLineDash([]);
 }
 
 function onMove(e: MouseEvent): void {
@@ -982,34 +1396,54 @@ function onMove(e: MouseEvent): void {
   const r = cv.getBoundingClientRect();
   const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
   const w = eventWorld(e);
+  mods = { shiftKey: e.shiftKey, altKey: e.altKey };
   if (measure?.active) {
     measure.b = e.shiftKey ? w : snapToFeature(w);
     requestDraw();
     return;
   }
-  if (drawRect) {
-    drawRect.b = snapPoint(w, e);
-    requestDraw();
+  if (drawing() && drag?.kind !== "pan") {
+    if (inside || e.buttons) drawMove(w, e);
+    cv.style.cursor = spaceDown ? "grab" : "crosshair";
     return;
   }
-  if (state.tool === "polygon" && poly.length) {
+  if (state.tool === "tooling" && (tdraft || tbox)) {
     hoverWorld = w;
+    if (tbox) tbox.b = w;
+    if (tdraft?.down) {
+      const pc = piece(tdraft.piece);
+      const sa = toScreen(tdraft.down);
+      const sb = toScreen(w);
+      // Moving with the button held (from the first point) draws freehand.
+      if (!tdraft.free && tdraft.pts.length === 1 && Math.hypot(sb.x - sa.x, sb.y - sa.y) > 4) tdraft.free = true;
+      if (tdraft.free && pc) {
+        const p = rawLocal(pc, w);
+        if (dist(p, tdraft.pts[tdraft.pts.length - 1]) * view.scale > 1.5) tdraft.pts.push(p);
+      }
+    }
     requestDraw();
+    return;
   }
   if (!drag) {
     hoverWorld = inside ? w : null;
     const prev = hover;
     if (!inside) hover = null;
     else if (state.tool === "join") hover = hitEdge(w);
-    else if (state.tool === "select" && selectedPieceId()) hover = hitEdge(w, selectedPieceId()!);
+    else if (state.tool === "select" && selectedPieceId() && !isMulti()) hover = hitEdge(w, selectedPieceId()!);
     else hover = null;
     if (prev?.piece !== hover?.piece || prev?.edge !== hover?.edge || state.tool === "fold") requestDraw();
-    cv.style.cursor = spaceDown ? "grab" : state.tool === "select" ? (hover ? "pointer" : "default") : "crosshair";
+    const handle = inside && state.tool === "select" ? hitHandle(w) : null;
+    cv.style.cursor = spaceDown ? "grab" : state.tool === "select" ? (handle?.kind === "bend" ? "grab" : handle ? "move" : hover ? "move" : "default") : "crosshair";
     return;
   }
   if (drag.kind === "pan") {
     view.ox = drag.ox + (e.clientX - drag.sx);
     view.oy = drag.oy + (e.clientY - drag.sy);
+    requestDraw();
+    return;
+  }
+  if (drag.kind === "box") {
+    drag.b = w;
     requestDraw();
     return;
   }
@@ -1020,42 +1454,111 @@ function onMove(e: MouseEvent): void {
     drag.moved = true;
     snapshot();
   }
+  if (drag.kind === "pieces") {
+    // The grabbed piece snaps; the others keep their places relative to it.
+    const origs = drag.origs;
+    const lead = { x: snap(origs[0].x + dx, e), y: snap(origs[0].y + dy, e) };
+    const d = { x: lead.x - origs[0].x, y: lead.y - origs[0].y };
+    // Smart snap: a corner of the grabbed piece meets or lines up with another piece's corner.
+    editHit = null;
+    const cpl = computedPiece(drag.ids[0]);
+    if (cpl && !e.altKey && !e.shiftKey) {
+      const corners = cpl.vertices.map((v) => ({ x: v.x + origs[0].x + dx, y: v.y + origs[0].y + dy }));
+      const m = snapMove(corners, drag.ids, view.scale);
+      if (m) {
+        d.x = dx + m.d.x;
+        d.y = dy + m.d.y;
+        if (m.d.x === 0) d.x = lead.x - origs[0].x;
+        if (m.d.y === 0) d.y = lead.y - origs[0].y;
+        editHit = m.hit;
+      }
+    }
+    drag.ids.forEach((id, k) => {
+      const pc = piece(id);
+      if (pc) pc.position = addV(origs[k], d);
+    });
+    notify();
+    return;
+  }
   const pc = piece(drag.id);
   if (!pc) return;
+  const at = (orig: V): V => snapLocal({ x: orig.x + dx, y: orig.y + dy }, pc.position, e);
   switch (drag.kind) {
-    case "piece":
-      pc.position = { x: snap(drag.orig.x + dx, e), y: snap(drag.orig.y + dy, e) };
-      notify();
-      return;
-    case "vertex":
-      pc.vertices[drag.index] = { x: snap(drag.orig.x + dx, e), y: snap(drag.orig.y + dy, e) };
+    case "vertex": {
+      const cp = computedPiece(pc.id);
+      const n = pc.vertices.length;
+      const k = drag.index;
+      // Smart snap in world mm: other pieces' corners and edges, lining up with this piece's own
+      // corners, 15 degree steps from the corner before it (Shift), the same length as another edge.
+      const world = (q: V) => addV(toStaged(cp, q), pc.position);
+      const others = pc.vertices.map((v, j) => (j === k ? null : world(v))).filter((v): v is V => !!v);
+      const prevV = world(pc.vertices[(k - 1 + n) % n]);
+      const lengths = pc.edges.map((ed, j) => ({ ed, j })).filter(({ j }) => j !== k && j !== (k - 1 + n) % n).map(({ ed, j }) => ({ len: segmentLength(pc.vertices[j], pc.vertices[(j + 1) % n], ed), a: world(pc.vertices[j]), b: world(pc.vertices[(j + 1) % n]) }));
+      const raw = world({ x: drag.orig.x + dx, y: drag.orig.y + dy });
+      editHit = smartSnap(raw, { scale: view.scale, shift: e.shiftKey, alt: e.altKey, from: prevV, own: others, skip: pc.id, lengths });
+      pc.vertices[k] = toDesign(cp, { x: editHit.p.x - pc.position.x, y: editHit.p.y - pc.position.y });
+      break;
+    }
+    case "edge": {
+      // The edge's start snaps; its end keeps the same offset.
+      const cp = computedPiece(pc.id);
+      const n = drag.orig.vertices.length;
+      const world = (q: V) => addV(toStaged(cp, q), pc.position);
+      const ei = drag.edge;
+      const a0 = drag.orig.vertices[ei];
+      const others = drag.orig.vertices.map((v, j) => (j === ei || j === (ei + 1) % n ? null : world(v))).filter((v): v is V => !!v);
+      editHit = smartSnap(world({ x: a0.x + dx, y: a0.y + dy }), { scale: view.scale, shift: false, alt: e.altKey, own: others, skip: pc.id });
+      const to = toDesign(cp, { x: editHit.p.x - pc.position.x, y: editHit.p.y - pc.position.y });
+      moveEdge(pc, drag.edge, drag.orig, { x: to.x - a0.x, y: to.y - a0.y });
+      break;
+    }
+    case "bend":
+      editHit = null;
+      bendEdge(pc, drag.edge, drag.orig, { x: e.altKey ? dx : snap(dx, { shiftKey: true, altKey: false }), y: e.altKey ? dy : snap(dy, { shiftKey: true, altKey: false }) });
       break;
     case "ctrl": {
       const edge = pc.edges[drag.edge];
       if (edge.type !== "cubic") return;
-      const p = { x: snap(drag.orig.x + dx, e), y: snap(drag.orig.y + dy, e) };
+      const p = at(drag.orig);
       if (drag.which === 0) edge.c1 = p;
       else edge.c2 = p;
       break;
     }
     case "hole": {
       const hd = pc.holes.find((x) => x.id === (drag as { hid: string }).hid);
-      if (hd) hd.center = { x: snap(drag.orig.x + dx, e), y: snap(drag.orig.y + dy, e) };
+      if (hd) hd.center = at(drag.orig);
       break;
     }
     case "fold": {
       const fd = pc.folds.find((x) => x.id === (drag as { fid: string }).fid);
-      if (fd) fd.position = snap(drag.orig + (fd.orientation === "horizontal" ? dy : dx), e);
+      if (fd) {
+        const horiz = fd.orientation === "horizontal";
+        fd.position = foldSnap(drag.orig + (horiz ? dy : dx), horiz ? pc.position.y : pc.position.x, e);
+      }
       break;
     }
     case "hardware": {
       const x = (pc.hardware ?? []).find((q) => q.id === (drag as { hid: string }).hid);
-      if (x) x.at = { x: snap(drag.orig.x + dx, e), y: snap(drag.orig.y + dy, e) };
+      if (x) x.at = at(drag.orig);
       break;
     }
     case "mark": {
       const x = (pc.marks ?? []).find((q) => q.id === (drag as { mid: string }).mid);
-      if (x) x.center = { x: snap(drag.orig.x + dx, e), y: snap(drag.orig.y + dy, e) };
+      if (x) x.center = at(drag.orig);
+      break;
+    }
+    case "tooling": {
+      // The first point snaps; the rest of the line (or design) keeps its shape.
+      const o = drag.origs[0]?.[0];
+      if (!o) break;
+      const lead = at(o);
+      const d = { x: lead.x - o.x, y: lead.y - o.y };
+      const sids = drag.sids;
+      const origs = drag.origs;
+      for (const st of pc.tooling ?? []) {
+        const k = sids.indexOf(st.id);
+        if (k >= 0) st.points = origs[k].map((q) => addV(q, d));
+      }
       break;
     }
   }
@@ -1063,19 +1566,46 @@ function onMove(e: MouseEvent): void {
 }
 
 function onUp(): void {
-  drag = null;
-  if (drawRect) {
-    const r = drawRect;
-    drawRect = null;
-    const w = Math.abs(r.b.x - r.a.x);
-    const hgt = Math.abs(r.b.y - r.a.y);
-    if (w > 2 && hgt > 2) {
-      const pc = rectPiece({ x: Math.min(r.a.x, r.b.x), y: Math.min(r.a.y, r.b.y) }, w, hgt, "Panel");
-      edit((p) => p.pieces.push(pc));
-      state.sel = { kind: "piece", piece: pc.id };
-      setStatus(`Added a ${w.toFixed(1)} × ${hgt.toFixed(1)} mm panel.`);
+  if (editHit) {
+    editHit = null;
+    requestDraw();
+  }
+  if (drawing() && drag?.kind !== "pan") {
+    drag = null;
+    drawUp();
+    return;
+  }
+  if (drag && (drag.kind === "edge" || drag.kind === "bend") && drag.moved) {
+    const pc = piece(drag.id);
+    if (pc) setStatus(drag.kind === "bend" ? `Edge bent; it is now ${fmt(edgeLength(pc, drag.edge))} long. Drag the round handle back to straighten it.` : `Edge moved. Its length is ${fmt(edgeLength(pc, drag.edge))}.`);
+  }
+  if (drag?.kind === "box") {
+    const box = drag;
+    drag = null;
+    const a = toScreen(box.a);
+    const b = toScreen(box.b);
+    if (Math.hypot(b.x - a.x, b.y - a.y) >= 3) {
+      const hits = piecesInBox(box.a, box.b);
+      selectPieces([...box.base, ...hits.filter((x) => !box.base.includes(x))]);
+      notify();
+      const n = selectedPieceIds().length;
+      setStatus(n > 1 ? `${n} pieces selected. Drag one to move them all; Shift+click adds or removes a piece.` : n ? "1 piece selected." : "Nothing in the box.");
     }
     requestDraw();
+    return;
+  }
+  drag = null;
+  if (tbox) {
+    finishBox();
+    return;
+  }
+  if (tdraft?.down) {
+    if (tdraft.free) finishDraft(false);
+    else {
+      tdraft.down = null;
+      setStatus("Click the next point. Double-click (or press Enter) to finish; click the first point to close the shape.");
+    }
+    return;
   }
   if (measure?.active) {
     measure.active = false;
@@ -1090,12 +1620,26 @@ export function clearMeasure(): void {
 }
 
 function onDouble(e: MouseEvent): void {
-  if (state.tool === "polygon") {
-    finishPolygon();
+  if (state.tool === "tooling") {
+    if (tdraft && !tdraft.free) {
+      // The double-click's second press added a point on top of the last one.
+      const n = tdraft.pts.length;
+      const pc = piece(tdraft.piece);
+      if (pc && n >= 2) {
+        const a = toScreen(addV(tdraft.pts[n - 1], pc.position));
+        const b = toScreen(addV(tdraft.pts[n - 2], pc.position));
+        if (Math.hypot(a.x - b.x, a.y - b.y) < 8) tdraft.pts.pop();
+      }
+      finishDraft(false);
+    }
+    return;
+  }
+  if (drawing()) {
+    drawDouble();
     return;
   }
   const id = selectedPieceId();
-  if (!id || state.tool !== "select") return;
+  if (!id || state.tool !== "select" || isMulti()) return;
   const w = eventWorld(e);
   const hit = hitEdge(w, id);
   if (!hit) return;

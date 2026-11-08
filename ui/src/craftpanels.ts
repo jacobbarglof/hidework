@@ -5,6 +5,7 @@
 import { api } from "./api";
 import { button, check, choose, field, h, num, text } from "./dom";
 import { edit, notify, piece, placing, setProject, setStatus, state } from "./store";
+import { DESIGNS, strokeControls, toolName } from "./tooling";
 import { fmtLen } from "./units";
 import type { Adhesive, BagParams, BagStyle, Bom, Catalogue, Construction, EdgeFinish, Face, Join, MarkKind, Piece, StitchKind } from "./types";
 
@@ -255,10 +256,38 @@ async function throughBelow(pid: string, id: string): Promise<void> {
 // ---------- surface work ----------
 
 export function marksList(pc: Piece, select: (id: string) => () => void): Node[] {
-  return (pc.marks ?? []).map((mk) =>
+  const out: Node[] = (pc.marks ?? []).map((mk) =>
     h("div", { class: "seam", onclick: select(mk.id) }, h("strong", {}, MARKS.find((m) => m[0] === mk.kind)?.[1] ?? mk.kind), h("span", {}, mk.text || mk.pattern || `${mk.size.x} × ${mk.size.y} mm`)),
   );
+  return [...out, ...toolingList(pc)];
 }
+
+/** One row per tooling line, or per ready-made design (its lines move together). */
+export function toolingList(pc: Piece): Node[] {
+  const seen = new Set<string>();
+  const out: Node[] = [];
+  for (const s of pc.tooling ?? []) {
+    if (s.group) {
+      if (seen.has(s.group)) continue;
+      seen.add(s.group);
+    }
+    const n = s.group ? (pc.tooling ?? []).filter((x) => x.group === s.group).length : 1;
+    const name = n > 1 ? "Tooled design" : s.kind === "cut" ? "Swivel-knife cut" : s.kind === "letters" ? "Letters" : toolName(s.tool);
+    const what = n > 1 ? `${n} lines` : s.kind === "letters" ? s.text ?? "" : s.kind === "fill" ? "area" : s.kind === "line" ? "row" : s.kind === "stamp" ? `${s.points.length} strike${s.points.length === 1 ? "" : "s"}` : "line";
+    out.push(h("div", { class: "seam", onclick: () => { state.sel = { kind: "tooling", piece: pc.id, id: s.id }; notify(); } }, h("strong", {}, name), h("span", {}, what)));
+  }
+  return out;
+}
+
+/** Inspector for a selected tooling line (`state.sel.kind === "tooling"`). */
+export function toolingInspector(pid: string, id: string, back: Node): Node[] {
+  const s = piece(pid)?.tooling?.find((x) => x.id === id);
+  if (!s) return [];
+  return [back, head("Tooling"), ...strokeControls()];
+}
+
+/** The ready-made tooling designs, for menus: [id for startTooling, name]. */
+export const TOOLING_DESIGNS: [string, string][] = DESIGNS.map((d) => [`design:${d.design}`, d.name]);
 
 export function markInspector(pid: string, id: string, back: Node): Node[] {
   const pc = piece(pid);

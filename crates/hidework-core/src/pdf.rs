@@ -1,6 +1,10 @@
-//! True-scale PDF export, tiled across Letter or A4 pages with trim frames and page labels.
+//! True-scale PDF export on Letter or A4 pages, either re-arranged onto the fewest pages
+//! (`print`, see `crate::print`) or as drawn, tiled with trim frames and page labels (`to_pdf`).
 //! A minimal hand-written PDF 1.4 writer: vector paths and the built-in Helvetica fonts only.
 
+use crate::compute::ComputedProject;
+use crate::model::Project;
+use crate::print::{PrintLayout, Printout};
 use crate::sheet::{spec, text_width, Align, Shape, Sheet, Style};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
@@ -60,9 +64,18 @@ fn pdf_text(s: &str) -> Vec<u8> {
 }
 
 fn text_op(buf: &mut Vec<u8>, x: f64, y: f64, size: f64, bold: bool, text: &str, align: Align) {
-    let x = if align == Align::Center { x - text_width(text, size, bold) / 2.0 } else { x };
+    text_op_turned(buf, x, y, size, bold, text, align, 0.0);
+}
+
+/// Text whose baseline is turned `angle` degrees clockwise on the page.
+#[allow(clippy::too_many_arguments)]
+fn text_op_turned(buf: &mut Vec<u8>, x: f64, y: f64, size: f64, bold: bool, text: &str, align: Align, angle: f64) {
+    let (c, s) = (angle.to_radians().cos(), angle.to_radians().sin());
+    let shift = if align == Align::Center { text_width(text, size, bold) / 2.0 } else { 0.0 };
+    let (x, y) = (x - c * shift, y - s * shift);
     let font = if bold { "F2" } else { "F1" };
-    let _ = write!(Bytes(buf), "BT /{font} {size:.3} Tf 1 0 0 -1 {x:.3} {y:.3} Tm (");
+    // Page space is y down, so the glyphs' up direction is (sin, -cos).
+    let _ = write!(Bytes(buf), "BT /{font} {size:.3} Tf {c:.6} {s:.6} {s:.6} {:.6} {x:.3} {y:.3} Tm (", -c);
     buf.extend(pdf_text(text));
     buf.extend_from_slice(b") Tj ET\n");
 }
@@ -81,9 +94,9 @@ fn stroke_setup(buf: &mut Vec<u8>, style: Style) {
     let _ = writeln!(Bytes(buf), "{:.3} w {:.3} G {:.3} g [{}] 0 d", st.width_mm.max(0.05), st.gray, st.gray, dash.join(" "));
 }
 
-fn shapes_op(buf: &mut Vec<u8>, sheet: &Sheet) {
+fn shapes_op(buf: &mut Vec<u8>, shapes: &[Shape]) {
     const K: f64 = 0.552_284_75;
-    for shape in &sheet.shapes {
+    for shape in shapes {
         match shape {
             Shape::Poly { pts, closed, style } => {
                 if pts.len() < 2 {
@@ -112,9 +125,9 @@ fn shapes_op(buf: &mut Vec<u8>, sheet: &Sheet) {
                     if *filled { "f" } else { "s" }
                 );
             }
-            Shape::Text { at, size, text, align, bold } => {
+            Shape::Text { at, size, text, align, bold, angle } => {
                 let _ = writeln!(Bytes(buf), "0 g");
-                text_op(buf, at.x, at.y, *size, *bold, text, *align);
+                text_op_turned(buf, at.x, at.y, *size, *bold, text, *align, *angle);
             }
         }
     }
@@ -130,16 +143,9 @@ fn page_content(sheet: &Sheet, page: PageSize, t: &Tiling, row: usize, col: usiz
     let _ = writeln!(Bytes(&mut b), "q {PT:.6} 0 0 {:.6} 0 {:.4} cm 1 J 1 j", -PT, ph * PT);
     let _ = writeln!(Bytes(&mut b), "q {m} {m} {:.3} {:.3} re W n", t.tile_w, t.tile_h);
     let _ = writeln!(Bytes(&mut b), "1 0 0 1 {:.3} {:.3} cm", m - col as f64 * t.tile_w, m - row as f64 * t.tile_h);
-    shapes_op(&mut b, sheet);
+    shapes_op(&mut b, &sheet.shapes);
     b.extend_from_slice(b"Q\n");
-    // Trim frame and corner ticks.
-    stroke_setup(&mut b, Style::Frame);
-    let _ = writeln!(Bytes(&mut b), "{m} {m} {:.3} {:.3} re S", t.tile_w, t.tile_h);
-    for (cx, cy) in [(m, m), (m + t.tile_w, m), (m, m + t.tile_h), (m + t.tile_w, m + t.tile_h)] {
-        let sx = if cx < pw / 2.0 { -1.0 } else { 1.0 };
-        let sy = if cy < ph / 2.0 { -1.0 } else { 1.0 };
-        let _ = writeln!(Bytes(&mut b), "{cx:.3} {cy:.3} m {:.3} {cy:.3} l {cx:.3} {cy:.3} m {cx:.3} {:.3} l S", cx + sx * 5.0, cy + sy * 5.0);
-    }
+    frame_op(&mut b, (pw, ph), (t.tile_w, t.tile_h));
     let mut label = format!("Page {index} of {n}  (row {}, column {})", row + 1, col + 1);
     if col + 1 < t.cols {
         let _ = write!(label, "   Right: page {}", index + 1);
@@ -162,11 +168,85 @@ fn page_content(sheet: &Sheet, page: PageSize, t: &Tiling, row: usize, col: usiz
     b
 }
 
-/// Returns the PDF bytes and the number of pages.
+/// Trim frame round the printable area, and corner ticks.
+fn frame_op(b: &mut Vec<u8>, (pw, ph): (f64, f64), (tw, th): (f64, f64)) {
+    let m = PAGE_MARGIN_MM;
+    stroke_setup(b, Style::Frame);
+    let _ = writeln!(Bytes(b), "{m} {m} {tw:.3} {th:.3} re S");
+    for (cx, cy) in [(m, m), (m + tw, m), (m, m + th), (m + tw, m + th)] {
+        let sx = if cx < pw / 2.0 { -1.0 } else { 1.0 };
+        let sy = if cy < ph / 2.0 { -1.0 } else { 1.0 };
+        let _ = writeln!(Bytes(b), "{cx:.3} {cy:.3} m {:.3} {cy:.3} l {cx:.3} {cy:.3} m {cx:.3} {:.3} l S", cx + sx * 5.0, cy + sy * 5.0);
+    }
+}
+
+/// The template as drawn, tiled. Returns the PDF bytes and the number of pages.
 pub fn to_pdf(sheet: &Sheet, page: PageSize) -> (Vec<u8>, usize) {
     let t = tiling(sheet, page);
-    let (pw, ph) = page.mm();
-    let n = t.cols * t.rows;
+    let mut pages = Vec::new();
+    for row in 0..t.rows {
+        for col in 0..t.cols {
+            pages.push((page.mm(), page_content(sheet, page, &t, row, col)));
+        }
+    }
+    let n = pages.len();
+    (write_pdf(pages), n)
+}
+
+/// Print a project with the chosen layout. Returns the PDF bytes and the number of pages.
+pub fn print(project: &Project, computed: &ComputedProject, page: PageSize, layout: PrintLayout) -> (Vec<u8>, usize) {
+    match layout {
+        PrintLayout::AsDrawn => to_pdf(&crate::sheet::build_sheet(project, computed), page),
+        PrintLayout::FewestPages => printout_pdf(&crate::print::fewest_pages(project, computed, page)),
+    }
+}
+
+/// Pages `print` would produce.
+pub fn page_count(project: &Project, computed: &ComputedProject, page: PageSize, layout: PrintLayout) -> usize {
+    match layout {
+        PrintLayout::AsDrawn => {
+            let t = tiling(&crate::sheet::build_sheet(project, computed), page);
+            t.cols * t.rows
+        }
+        PrintLayout::FewestPages => crate::print::fewest_pages(project, computed, page).pages.len(),
+    }
+}
+
+/// Render a laid-out printout.
+pub fn printout_pdf(p: &Printout) -> (Vec<u8>, usize) {
+    let m = PAGE_MARGIN_MM;
+    let (pw, ph) = p.paper;
+    let (tw, th) = p.tile;
+    let mut pages = Vec::new();
+    for page in &p.pages {
+        let mut b = Vec::new();
+        let _ = writeln!(Bytes(&mut b), "q {PT:.6} 0 0 {:.6} 0 {:.4} cm 1 J 1 j", -PT, ph * PT);
+        if let Some(t) = page.tile {
+            // The part of the big piece this page shows.
+            let _ = writeln!(Bytes(&mut b), "q {m} {m} {tw:.3} {th:.3} re W n");
+            let _ = writeln!(Bytes(&mut b), "1 0 0 1 {:.3} {:.3} cm", m - t.col as f64 * tw, m - t.row as f64 * th);
+            if let Some(c) = &p.canvas {
+                shapes_op(&mut b, &c.shapes);
+            }
+            b.extend_from_slice(b"Q\n");
+        }
+        let _ = writeln!(Bytes(&mut b), "q {m} {m} {tw:.3} {th:.3} re W n");
+        shapes_op(&mut b, &page.shapes);
+        b.extend_from_slice(b"Q\n");
+        frame_op(&mut b, (pw, ph), (tw, th));
+        let _ = writeln!(Bytes(&mut b), "0 g");
+        text_op(&mut b, m, m - 4.0, 3.0, true, &page.header, Align::Left);
+        text_op(&mut b, m, ph - m + 6.5, 2.6, false, &page.footer, Align::Left);
+        b.extend_from_slice(b"Q\n");
+        pages.push(((pw, ph), b));
+    }
+    let n = pages.len();
+    (write_pdf(pages), n)
+}
+
+/// Assemble pages (paper size in mm, content stream) into a PDF file.
+fn write_pdf(pages: Vec<((f64, f64), Vec<u8>)>) -> Vec<u8> {
+    let n = pages.len();
     let mut objs: Vec<Vec<u8>> = Vec::new();
     // 1 catalog, 2 pages, 3 font, 4 bold font, 5 info, then (page, content) pairs.
     let kids: Vec<String> = (0..n).map(|i| format!("{} 0 R", 6 + 2 * i)).collect();
@@ -175,24 +255,20 @@ pub fn to_pdf(sheet: &Sheet, page: PageSize) -> (Vec<u8>, usize) {
     objs.push(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_vec());
     objs.push(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>".to_vec());
     objs.push(b"<< /Producer (Hidework) /Title (Hidework template) >>".to_vec());
-    for row in 0..t.rows {
-        for col in 0..t.cols {
-            let i = row * t.cols + col;
-            let content = page_content(sheet, page, &t, row, col);
-            objs.push(
-                format!(
-                    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {:.3} {:.3}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {} 0 R >>",
-                    pw * PT,
-                    ph * PT,
-                    7 + 2 * i
-                )
-                .into_bytes(),
-            );
-            let mut stream = format!("<< /Length {} >>\nstream\n", content.len()).into_bytes();
-            stream.extend(content);
-            stream.extend_from_slice(b"\nendstream");
-            objs.push(stream);
-        }
+    for (i, ((pw, ph), content)) in pages.into_iter().enumerate() {
+        objs.push(
+            format!(
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {:.3} {:.3}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {} 0 R >>",
+                pw * PT,
+                ph * PT,
+                7 + 2 * i
+            )
+            .into_bytes(),
+        );
+        let mut stream = format!("<< /Length {} >>\nstream\n", content.len()).into_bytes();
+        stream.extend(content);
+        stream.extend_from_slice(b"\nendstream");
+        objs.push(stream);
     }
     let mut out = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n".to_vec();
     let mut offsets = Vec::new();
@@ -208,5 +284,5 @@ pub fn to_pdf(sheet: &Sheet, page: PageSize) -> (Vec<u8>, usize) {
         out.extend(format!("{o:010} 00000 n \n").into_bytes());
     }
     out.extend(format!("trailer\n<< /Size {} /Root 1 0 R /Info 5 0 R >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).into_bytes());
-    (out, n)
+    out
 }

@@ -640,6 +640,7 @@ mod tests {
             notes: String::new(),
             hardware: vec![],
             marks: vec![],
+            tooling: vec![],
             place: None,
         }
     }

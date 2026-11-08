@@ -5,12 +5,19 @@ import { api } from "./api";
 import { viewCenter } from "./canvas";
 import { button, check, choose, field, h, num, rerender, text } from "./dom";
 import { defaultsFor, drape, loadPresets, maxFrame, replay, runDrape, scrub } from "./drape";
+import { alignSelected, copySelection, cutSelection, deletePieces, distributeSelected, duplicateSelected, mergeSelected } from "./editing";
 import { deleteVertex, duplicatePiece, mirrorPiece, rotatePiece, toggleCurve } from "./ops";
-import { computedPiece, edit, notify, piece, setStatus, state, uid, version } from "./store";
+import { computedPiece, edit, isMulti, notify, piece, selectedPieceIds, setStatus, state, uid, version } from "./store";
 import { colorFor } from "./textures";
 import { fmtLen, fmtThickness, fromDisp, OZ_MM, round, toDisp } from "./units";
 import { sim3d } from "./view3d";
-import { arrangeSection, bagBuilder, bomCraftSection, edgeFinishSection, finishAll, hardwareInspector, hardwareList, joinCraftSection, loadCatalogue, markInspector, marksList, projectCraftSection, stitchSection } from "./craftpanels";
+import { arrangeSection, bagBuilder, bomCraftSection, edgeFinishSection, finishAll, hardwareInspector, hardwareList, joinCraftSection, loadCatalogue, markInspector, marksList, projectCraftSection, stitchSection, toolingInspector } from "./craftpanels";
+import { offerUndo } from "./commandline";
+import { simple } from "./prefs";
+import { openSizes, sizeInspector } from "./sizes";
+import { openTooling } from "./tooling";
+import { openHideLayout } from "./hide";
+import { plainWords } from "./words";
 import { drape as drapeState } from "./drape";
 import type { Bom, Material, MaterialKind, MaterialStats, Physics, Piece, Scene, Side, StrapParams } from "./types";
 
@@ -23,7 +30,7 @@ const PITCHES = [2.7, 3, 3.38, 3.85, 4, 5, 6];
 const PUNCH_SIZES = [1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 6, 8, 10];
 const DEFAULT_PHYSICS: Physics = { densityKgM3: 900, bendingModulusMpa: 20, tensileModulusMpa: 80, anisotropy: 0.85, biasStiffness: 0.9, friction: 0.6, tensileStrengthMpa: 20 };
 
-export const panel = { special: null as null | "strap" | "bag" };
+export const panel = { special: null as null | "strap" | "bag" | "size" };
 
 const strapForm: StrapParams = {
   name: "Strap",
@@ -91,6 +98,7 @@ function metric(label: string, value: string, big = false): HTMLElement {
 export function renderInspector(el: HTMLElement): void {
   refreshReports();
   rerender(el, () => {
+    if (panel.special === "size") return sizeInspector();
     if (panel.special === "strap") return strapInspector();
     if (panel.special === "bag") {
       if (!drapeState.presets.length) void loadPresets().then(notify);
@@ -105,7 +113,7 @@ export function renderInspector(el: HTMLElement): void {
       case "material":
         return materialInspector(s.id);
       case "piece":
-        return pieceInspector(s.piece);
+        return isMulti() ? multiInspector() : pieceInspector(s.piece);
       case "edge":
         return edgeInspector(s.piece, s.index);
       case "vertex":
@@ -118,13 +126,33 @@ export function renderInspector(el: HTMLElement): void {
         return hardwareInspector(s.piece, s.id, back(s.piece));
       case "mark":
         return markInspector(s.piece, s.id, back(s.piece));
+      case "tooling":
+        return toolingInspector(s.piece, s.id, back(s.piece));
     }
     return [];
   });
+  if (simple()) plainWords(el);
+}
+
+// ---------- Simple mode: fewer things at once ----------
+
+/** "More options" sections the user has opened (kept open while they work). */
+const opened = new Set<string>();
+
+/**
+ * In Simple mode, tuck advanced parts of a panel behind a "More options" button; with All tools
+ * they show as usual.
+ */
+function more(key: string, nodes: (Node | null | undefined)[], label = "More options"): Node[] {
+  const list = nodes.filter((n): n is Node => !!n);
+  if (!simple() || !list.length) return list;
+  const d = h("details", { class: "more", open: opened.has(key) }, h("summary", { "data-key": `more-${key}` }, label), h("div", { class: "more-body" }, ...list));
+  d.addEventListener("toggle", () => (d.open ? opened.add(key) : opened.delete(key)));
+  return [d];
 }
 
 function back(pieceId: string): HTMLElement {
-  return h("a", { class: "back", href: "#", onclick: (e: Event) => { e.preventDefault(); select({ kind: "piece", piece: pieceId })(); } }, "‹ Piece");
+  return h("a", { class: "back", href: "#", onclick: (e: Event) => { e.preventDefault(); select({ kind: "piece", piece: pieceId })(); } }, "‹ Back to the piece");
 }
 
 /** The simulation readout, shown with the project. */
@@ -149,25 +177,50 @@ export function simReadout(): Node[] {
 
 function projectInspector(): Node[] {
   const p = state.project;
+  const thread = field("Thread colour", (() => {
+    const i = h("input", { type: "color", value: p.threadColor ?? "#efe4c8", "data-key": "thread" });
+    i.addEventListener("change", () => edit((x) => (x.threadColor = i.value)));
+    return i;
+  })());
+  const units = field("Measure in", choose("proj-units", [["mm", "Millimetres"], ["in", "Inches"]], p.units, (v) => edit((x) => (x.units = v))));
+  const waste = field("Cutting waste, %", num("waste", state.wastePct, (v) => { state.wastePct = Math.max(0, v); notify(); }, { step: 5, min: 0 }));
+  if (simple()) return simpleProjectInspector(units, [thread, ...projectCraftSection(), heading("Simulation"), ...simReadout(), waste]);
   const out: Node[] = [
     heading("Project"),
     field("Name", text("proj-name", p.name, (v) => edit((x) => (x.name = v)))),
-    h(
-      "div",
-      { class: "grid2" },
-      field("Units", choose("proj-units", [["mm", "Millimetres"], ["in", "Inches"]], p.units, (v) => edit((x) => (x.units = v)))),
-      field("Thread colour", (() => {
-        const i = h("input", { type: "color", value: p.threadColor ?? "#efe4c8", "data-key": "thread" });
-        i.addEventListener("change", () => edit((x) => (x.threadColor = i.value)));
-        return i;
-      })()),
-    ),
+    h("div", { class: "grid2" }, units, thread),
     ...projectCraftSection(),
     heading("Simulation"),
     ...simReadout(),
     heading("Materials & cost"),
-    field("Cutting waste, %", num("waste", state.wastePct, (v) => { state.wastePct = Math.max(0, v); notify(); }, { step: 5, min: 0 })),
+    waste,
   ];
+  out.push(...bomTables());
+  for (const w of state.computed?.warnings ?? []) out.push(h("p", { class: "warn" }, w));
+  return out;
+}
+
+/** Simple mode with nothing selected: the name, what to do next, and how much leather to buy. */
+function simpleProjectInspector(units: Node, rest: Node[]): Node[] {
+  const p = state.project;
+  const bom = reports.bom;
+  const area = bom?.materials.reduce((s, m) => s + m.sqftWithWaste, 0) ?? 0;
+  return [
+    heading("Your project"),
+    field("Name", text("proj-name", p.name, (v) => edit((x) => (x.name = v)))),
+    h("p", { class: "hint plain" }, p.pieces.length ? "Click a piece in the pattern to change it, or use the big buttons at the top." : "There are no pieces yet. Click New project to choose what to make."),
+    p.pieces.length ? h("div", { class: "btn-row" }, button("Change the size", openSizes, "primary big")) : null,
+    units,
+    bom && area > 0 ? h("p", { class: "stat-line plain" }, `Leather to buy: about ${area.toFixed(1)} square feet${bom.totalCost !== null ? `, about $${bom.totalCost.toFixed(2)}` : ""}.`) : null,
+    p.pieces.length ? h("div", { class: "btn-row" }, button("How many can I make from my hide?", openHideLayout, "big")) : null,
+    ...(state.computed?.warnings ?? []).map((w) => h("p", { class: "warn" }, w)),
+    ...more("project", [...rest, heading("Materials & cost"), ...bomTables()]),
+  ].filter((n): n is HTMLElement => !!n);
+}
+
+function bomTables(): Node[] {
+  const p = state.project;
+  const out: Node[] = [];
   const bom = reports.bom;
   if (bom) {
     const t = h("table", { class: "report" }, h("tr", {}, h("th", {}, "Material"), h("th", {}, "Area"), h("th", {}, "Buy"), h("th", {}, "Cost")));
@@ -182,7 +235,6 @@ function projectInspector(): Node[] {
       out.push(hw);
     }
   }
-  for (const w of state.computed?.warnings ?? []) out.push(h("p", { class: "warn" }, w));
   return out;
 }
 
@@ -191,10 +243,7 @@ function joinInspector(id: string): Node[] {
   const rep = state.computed?.joins.find((r) => r.id === id);
   if (!j) return [];
   const u = state.project.units;
-  return <Node[]>[
-    heading("Seam"),
-    h("p", { class: `verdict ${rep?.ok ? "ok" : "bad"}` }, rep?.message ?? "Measuring…"),
-    rep
+  const table = rep
       ? h(
           "table",
           { class: "report" },
@@ -203,10 +252,12 @@ function joinInspector(id: string): Node[] {
           h("tr", {}, h("td", {}, "Stitch line"), h("td", {}, fmtLen(rep.aStitchMm, u)), h("td", {}, fmtLen(rep.bStitchMm, u))),
           h("tr", {}, h("td", {}, "Holes"), h("td", {}, String(rep.aHoles)), h("td", {}, String(rep.bHoles))),
         )
-      : null,
-    ...joinCraftSection(j),
-    h("p", { class: "hint" }, "In 3D, this seam is sewn (or glued, or zipped) when you simulate."),
-    h("div", { class: "btn-row" }, button("Remove seam", () => { edit((p) => (p.joins = p.joins.filter((x) => x.id !== id))); state.sel = { kind: "none" }; notify(); }, "danger")),
+      : null;
+  return <Node[]>[
+    heading("Seam"),
+    h("p", { class: `verdict ${rep?.ok ? "ok" : "bad"}` }, rep?.message ?? "Measuring…"),
+    ...more("join", [table, ...joinCraftSection(j), h("p", { class: "hint" }, "In 3D, this seam is sewn (or glued, or zipped) when you simulate.")]),
+    h("div", { class: "btn-row" }, button("Remove seam", () => { edit((p) => (p.joins = p.joins.filter((x) => x.id !== id))); state.sel = { kind: "none" }; offerUndo("The seam is removed."); }, "danger")),
   ];
 }
 
@@ -285,44 +336,49 @@ function pieceInspector(id: string): Node[] {
   const u = state.project.units;
   const set = (fn: (x: Piece) => void) => edit(() => fn(pc));
   const matOptions = state.project.materials.map((m) => [m.id, `${m.name}, ${fmtThickness(m.thicknessMm)}`] as [string, string]);
-  const out: Node[] = [
-    heading("Pattern piece"),
-    field("Name", text("pc-name", pc.name, (v) => set((x) => (x.name = v)))),
-    field("Fabric", choose("pc-mat", matOptions, pc.materialId, (v) => set((x) => (x.materialId = v)))),
-    h(
-      "div",
-      { class: "grid3" },
-      field("Cut ×", num("pc-cut", pc.cutCount, (v) => set((x) => (x.cutCount = Math.max(1, Math.round(v)))), { step: 1, min: 1 })),
-      field("Grain °", num("pc-grain", pc.grainDeg, (v) => set((x) => (x.grainDeg = v)), { step: 15 })),
-      field(`Allowance`, len("pc-sa", pc.seamAllowanceMm, (v) => set((x) => (x.seamAllowanceMm = Math.max(0, v))), 0)),
-      field(`X, ${unitLabel()}`, len("pc-x", pc.position.x, (v) => set((x) => (x.position.x = v)))),
-      field(`Y, ${unitLabel()}`, len("pc-y", pc.position.y, (v) => set((x) => (x.position.y = v)))),
-    ),
-    field("Notes printed on the template", (() => {
-      const t = h("textarea", { rows: 2, "data-key": "pc-notes", onchange: (e: Event) => set((x) => (x.notes = (e.target as HTMLTextAreaElement).value)) });
-      t.value = pc.notes ?? "";
-      return t;
-    })()),
-    h(
-      "div",
-      { class: "btn-row" },
-      button("Mirror", () => set((x) => mirrorPiece(x, "x")), "quiet"),
-      button("Flip", () => set((x) => mirrorPiece(x, "y")), "quiet"),
-      button("Rotate", () => set((x) => rotatePiece(x, true)), "quiet"),
-      button("Duplicate", () => {
-        const copy = duplicatePiece(pc);
-        edit((p) => p.pieces.push(copy));
-        state.sel = { kind: "piece", piece: copy.id };
-        notify();
-      }, "quiet"),
-      button("Lining", async () => {
-        const lid = uid("p");
-        const lining = await api.lining(state.project, id, 2, lid);
-        edit((p) => p.pieces.push(lining));
-        state.sel = { kind: "piece", piece: lid };
-        setStatus("Lining made 2 mm inside the outline.");
-      }, "quiet"),
-    ),
+  const easy = simple();
+  const cut = field(easy ? "How many to cut" : "Cut ×", num("pc-cut", pc.cutCount, (v) => set((x) => (x.cutCount = Math.max(1, Math.round(v)))), { step: 1, min: 1 }));
+  const where = [
+    field("Grain °", num("pc-grain", pc.grainDeg, (v) => set((x) => (x.grainDeg = v)), { step: 15 })),
+    field(`Allowance`, len("pc-sa", pc.seamAllowanceMm, (v) => set((x) => (x.seamAllowanceMm = Math.max(0, v))), 0)),
+    field(easy ? `Across the sheet, ${unitLabel()}` : `X, ${unitLabel()}`, len("pc-x", pc.position.x, (v) => set((x) => (x.position.x = v)))),
+    field(easy ? `Down the sheet, ${unitLabel()}` : `Y, ${unitLabel()}`, len("pc-y", pc.position.y, (v) => set((x) => (x.position.y = v)))),
+  ];
+  const lining = button("Lining", async () => {
+    const lid = uid("p");
+    const lining = await api.lining(state.project, id, 2, lid);
+    edit((p) => p.pieces.push(lining));
+    state.sel = { kind: "piece", piece: lid };
+    offerUndo("A lining is made, 2 mm inside the outline.");
+  }, "quiet");
+  const copy = button(easy ? "Make a copy" : "Duplicate", () => {
+    const c = duplicatePiece(pc);
+    edit((p) => p.pieces.push(c));
+    state.sel = { kind: "piece", piece: c.id };
+    offerUndo(`A copy of ${pc.name} is made, next to it.`);
+  }, "quiet");
+  const shape = [
+    button("Mirror", () => set((x) => mirrorPiece(x, "x")), "quiet"),
+    button("Flip", () => set((x) => mirrorPiece(x, "y")), "quiet"),
+    button(easy ? "Turn" : "Rotate", () => set((x) => rotatePiece(x, true)), "quiet"),
+    copy,
+  ];
+  const notes = field("Notes printed on the template", (() => {
+    const t = h("textarea", { rows: 2, "data-key": "pc-notes", onchange: (e: Event) => set((x) => (x.notes = (e.target as HTMLTextAreaElement).value)) });
+    t.value = pc.notes ?? "";
+    return t;
+  })());
+  const name = field("Name", text("pc-name", pc.name, (v) => set((x) => (x.name = v))));
+  const fabric = field("Fabric", choose("pc-mat", matOptions, pc.materialId, (v) => set((x) => (x.materialId = v))));
+  const out: Node[] = easy
+    ? [
+        h("div", { class: "grid2" }, cut),
+        h("div", { class: "grid2" }, ...where),
+        notes,
+        h("div", { class: "btn-row" }, lining),
+      ]
+    : [heading("Pattern piece"), name, fabric, h("div", { class: "grid3" }, cut, ...where), notes, h("div", { class: "btn-row" }, ...shape, lining)];
+  out.push(
     heading("Stitching"),
     h(
       "div",
@@ -337,7 +393,7 @@ function pieceInspector(id: string): Node[] {
     ),
     ...stitchSection(pc),
     h("datalist", { id: "pitches" }, ...PITCHES.map((p) => h("option", { value: String(p) }))),
-  ];
+  );
   const table = h("table", { class: "report edges" }, h("tr", {}, h("th", {}, "Edge"), h("th", {}, "Stitch"), h("th", {}, "Length"), h("th", {}, "Holes"), h("th", {}, "Skive")));
   pc.edges.forEach((e, i) => {
     const rep = cp?.edges[i];
@@ -373,8 +429,8 @@ function pieceInspector(id: string): Node[] {
       h(
         "div",
         { class: "seam", onclick: select({ kind: "fold", piece: id, id: f.id }) },
-        h("strong", {}, `${f.orientation === "horizontal" ? "Across" : "Down"} at ${fmtLen(f.position, u)}`),
-        h("span", {}, g ? `+${fmtLen(g.shiftMm, u)} around ${fmtLen(f.contentsMm, u)} of contents` : ""),
+        h("strong", {}, `Folds ${f.orientation === "horizontal" ? "across" : "down"}, ${fmtLen(f.position, u)} from the ${f.orientation === "horizontal" ? "top" : "left"}`),
+        h("span", {}, g ? `${fmtLen(g.shiftMm, u)} extra for the bend, round ${fmtLen(f.contentsMm, u)} of contents` : ""),
       ),
     );
   }
@@ -397,17 +453,71 @@ function pieceInspector(id: string): Node[] {
   out.push(heading("Surface work"));
   const mk = marksList(pc, (mid) => select({ kind: "mark", piece: id, id: mid }));
   out.push(...(mk.length ? mk : [h("p", { class: "hint" }, "Mark tool (E): stamps, tooling, embossing, engraving, paint, lettering and perforation.")]));
-  out.push(h("div", { class: "btn-row spaced" }, button("Delete piece", () => deletePiece(id), "danger")));
-  return out;
+  const del = h("div", { class: "btn-row spaced" }, button("Delete piece", () => { deletePiece(id); offerUndo(`${pc.name} is deleted.`); }, "danger"));
+  if (!easy) return [...out, del];
+  // Simple mode: the few things most people change, the rest behind More options.
+  return [
+    heading("This piece"),
+    h("div", { class: "btn-row big-row" }, button("Change the size", openSizes, "primary big"), button("Decorate (tooling)", openTooling, "big")),
+    name,
+    fabric,
+    h("div", { class: "btn-row" }, ...shape),
+    ...more("piece", out),
+    del,
+  ];
 }
 
+/** Delete a piece with its seams and laminates (one undo step). */
 export function deletePiece(id: string): void {
-  edit((p) => {
-    p.pieces = p.pieces.filter((x) => x.id !== id);
-    p.joins = p.joins.filter((j) => j.a.pieceId !== id && j.b.pieceId !== id);
-  });
-  state.sel = { kind: "none" };
-  notify();
+  deletePieces([id]);
+}
+
+/** Several pieces selected: a summary and the actions that work on all of them. */
+function multiInspector(): Node[] {
+  const ids = selectedPieceIds();
+  const pcs = ids.map((id) => piece(id)).filter((x): x is Piece => !!x);
+  const set = new Set(ids);
+  const seams = state.project.joins.filter((j) => set.has(j.a.pieceId) && set.has(j.b.pieceId)).length;
+  const u = state.project.units;
+  let area = 0;
+  for (const pc of pcs) {
+    const cp = computedPiece(pc.id);
+    const pts = cp?.cut ?? [];
+    let a = 0;
+    for (let i = 0; i < pts.length; i++) a += pts[i].x * pts[(i + 1) % pts.length].y - pts[(i + 1) % pts.length].x * pts[i].y;
+    area += (Math.abs(a) / 2) * pc.cutCount;
+  }
+  const areaTxt = u === "in" ? `${(area / 645.16).toFixed(1)} in²` : `${(area / 100).toFixed(1)} cm²`;
+  return [
+    heading(`${pcs.length} pieces selected`),
+    h("p", { class: "stat-line" }, `${seams ? `${seams} seam${seams === 1 ? "" : "s"} between them · ` : ""}${areaTxt} of leather to cut`),
+    ...pcs.map((pc) => h("div", { class: "seam", onclick: select({ kind: "piece", piece: pc.id }) }, h("strong", {}, pc.name), h("span", {}, `cut ${pc.cutCount}`))),
+    h(
+      "div",
+      { class: "btn-row" },
+      button("Merge", mergeSelected, "primary"),
+      button("Duplicate", duplicateSelected, "quiet"),
+      button("Copy", copySelection, "quiet"),
+      button("Cut", cutSelection, "quiet"),
+    ),
+    h("p", { class: "hint" }, seams ? "Merge joins pieces along the seams between them into one piece." : "Merge needs a seam between the pieces (Sew, S) or outlines that overlap or touch."),
+    heading("Arrange"),
+    h(
+      "div",
+      { class: "btn-row" },
+      button("Left", () => alignSelected("left"), "quiet"),
+      button("Centre", () => alignSelected("centre"), "quiet"),
+      button("Right", () => alignSelected("right"), "quiet"),
+      button("Top", () => alignSelected("top"), "quiet"),
+      button("Middle", () => alignSelected("middle"), "quiet"),
+      button("Bottom", () => alignSelected("bottom"), "quiet"),
+    ),
+    pcs.length > 2
+      ? h("div", { class: "btn-row" }, button("Space across", () => distributeSelected("x"), "quiet"), button("Space down", () => distributeSelected("y"), "quiet"))
+      : null,
+    h("p", { class: "hint" }, "Shift or Ctrl+click adds or removes a piece; drag a box on empty paper to select several. Drag any selected piece to move them all."),
+    h("div", { class: "btn-row spaced" }, button(`Delete ${pcs.length} pieces`, () => deletePieces(ids), "danger")),
+  ].filter((n): n is HTMLElement => !!n);
 }
 
 /** Make a gusset as long as the stitch line (or edge) of `edges`, and join it. */
@@ -484,14 +594,14 @@ function vertexInspector(id: string, i: number): Node[] {
   const v = pc.vertices[i];
   return [
     back(id),
-    heading(`Point ${i + 1}`),
+    heading(`Corner point ${i + 1}`),
     h(
       "div",
       { class: "grid2" },
       field(`X, ${unitLabel()}`, len("v-x", v.x, (x) => edit(() => (pc.vertices[i].x = x)))),
       field(`Y, ${unitLabel()}`, len("v-y", v.y, (y) => edit(() => (pc.vertices[i].y = y)))),
     ),
-    h("p", { class: "hint" }, "Before fold allowance, from the piece origin."),
+    h("p", { class: "hint" }, "Measured from the piece's top-left corner, before the fold allowance is added."),
     (() => {
       const r = num("v-round", 8, () => {}, { step: 1, min: 1 });
       return h("div", { class: "btn-row" }, field("Corner radius", r), button("Round corner", async () => {
@@ -510,7 +620,7 @@ function vertexInspector(id: string, i: number): Node[] {
         }
       }, "quiet"));
     })(),
-    h("div", { class: "btn-row" }, button("Delete point", () => { let ok = false; edit((p) => (ok = deleteVertex(p, pc, i))); if (ok) state.sel = { kind: "piece", piece: id }; notify(); }, "danger")),
+    h("div", { class: "btn-row" }, button("Delete point", () => { let ok = false; edit((p) => (ok = deleteVertex(p, pc, i))); if (ok) { state.sel = { kind: "piece", piece: id }; offerUndo("The corner point is deleted."); } else notify(); }, "danger")),
   ];
 }
 
@@ -534,7 +644,7 @@ function holeInspector(id: string, hid: string): Node[] {
       field(`Y`, len("h-y", hole.center.y, (y) => edit(() => (hole.center.y = y)))),
     ),
     h("datalist", { id: "punch-sizes" }, ...PUNCH_SIZES.map((s) => h("option", { value: String(s) }))),
-    h("div", { class: "btn-row" }, button("Delete", () => { edit(() => (pc.holes = pc.holes.filter((x) => x.id !== hid))); state.sel = { kind: "piece", piece: id }; notify(); }, "danger")),
+    h("div", { class: "btn-row" }, button("Delete", () => { edit(() => (pc.holes = pc.holes.filter((x) => x.id !== hid))); state.sel = { kind: "piece", piece: id }; offerUndo("The hole is deleted."); }, "danger")),
   ];
 }
 
@@ -551,11 +661,11 @@ function foldInspector(id: string, fid: string): Node[] {
     h(
       "div",
       { class: "grid2" },
-      field(`Position, ${unitLabel()}`, len("f-pos", f.position, (v) => edit(() => (f.position = v)))),
-      field(`Contents, ${unitLabel()}`, len("f-contents", f.contentsMm, (v) => edit(() => (f.contentsMm = Math.max(0, v))), 0)),
+      field(`Distance from the ${f.orientation === "horizontal" ? "top" : "left"}, ${unitLabel()}`, len("f-pos", f.position, (v) => edit(() => (f.position = v)))),
+      field(`What goes inside, ${unitLabel()} thick`, len("f-contents", f.contentsMm, (v) => edit(() => (f.contentsMm = Math.max(0, v))), 0)),
     ),
-    h("p", { class: "verdict ok" }, g ? `Adds ${fmtLen(g.shiftMm, u)}: π × (contents + leather) ÷ 2.` : ""),
-    h("div", { class: "btn-row" }, button("Delete fold", () => { edit(() => (pc.folds = pc.folds.filter((x) => x.id !== fid))); state.sel = { kind: "piece", piece: id }; notify(); }, "danger")),
+    h("p", { class: "verdict ok" }, g ? `Fold allowance: ${fmtLen(g.shiftMm, u)}. When leather folds, the outside of the bend has to go further round than the inside, so the pattern needs that much extra length here. Hidework adds it for you from the leather's thickness and what goes inside.` : ""),
+    h("div", { class: "btn-row" }, button("Delete fold", () => { edit(() => (pc.folds = pc.folds.filter((x) => x.id !== fid))); state.sel = { kind: "piece", piece: id }; offerUndo("The fold is deleted."); }, "danger")),
   ];
 }
 

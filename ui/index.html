@@ -6,44 +6,58 @@
     <title>Hidework</title>
   </head>
   <body>
-    <header class="menubar">
+    <header class="appbar">
       <div class="brand"><img src="/seal.png" alt="" /><span class="title">Hidework</span></div>
-      <nav id="menus" class="menus"></nav>
-      <div class="spacer"></div>
-      <div class="menubar-actions">
-        <select id="page-size" title="Paper size for printing">
-          <option value="letter">Letter</option>
-          <option value="a4">A4</option>
-        </select>
-        <button class="btn" id="btn-print" type="button" title="Print the true-scale template (Ctrl+P)">Print</button>
-        <button class="btn sim-toggle" id="btn-sim" type="button" title="Simulate (Space)"><span class="dot"></span>Simulate</button>
+      <nav class="menubar" id="menubar" aria-label="Menus"></nav>
+      <div class="quick" id="quick"></div>
+      <div class="app-title" id="app-title"></div>
+      <div class="appbar-right">
+        <button class="search-btn" id="search-btn" type="button"></button>
+        <button class="tools-btn" id="tools-btn" type="button"></button>
+        <button class="btn sim-toggle" id="btn-sim" type="button"><span class="dot"></span><span class="lbl">Simulate</span></button>
       </div>
     </header>
-    <main class="workspace">
-      <aside id="library" class="dock left"></aside>
+    <nav class="simplebar" id="simplebar" aria-label="Main jobs"></nav>
+    <nav class="ribbon" aria-label="Toolbar">
+      <div class="ws-switch" id="ws-switch"></div>
+      <div class="ribbon-main">
+        <div class="ribbon-tabs" id="ribbon-tabs"></div>
+        <div class="ribbon-panel" id="ribbon-panel"></div>
+      </div>
+    </nav>
+    <main class="workspace layout-both" id="workspace">
+      <aside class="dock left">
+        <section id="steps" class="steps hidden" aria-label="Your steps"></section>
+        <div id="library" class="library"></div>
+      </aside>
       <section class="window w3d">
-        <div class="win-head">
-          <span class="win-title">3D</span>
-          <div id="tb3d" class="win-toolbar"></div>
-        </div>
+        <div class="win-head" id="head3d"></div>
         <div id="view3d" class="win-body"></div>
         <div id="hud3d" class="hud"></div>
+        <div id="easy3d" class="easy3d"></div>
+        <div id="nav3d" class="navbar"></div>
       </section>
-      <div class="splitter" id="splitter" title="Drag to resize"></div>
+      <div class="splitter" id="splitter" title="Drag to resize; double-click to even out"></div>
       <section class="window w2d">
-        <div class="win-head">
-          <span class="win-title">2D</span>
-          <div id="tb2d" class="win-toolbar"></div>
-        </div>
+        <div class="win-head" id="head2d"></div>
         <div id="stage" class="win-body"><canvas id="canvas" tabindex="0"></canvas></div>
+        <div id="nav2d" class="navbar"></div>
       </section>
       <aside class="dock right">
         <div id="browser" class="browser"></div>
         <div id="inspector" class="property-editor"></div>
       </aside>
     </main>
-    <footer class="statusbar"><span id="status"></span><span id="info"></span></footer>
-    <div id="menu" class="menu hidden"></div>
+    <div class="timeline" id="timeline" aria-label="History"></div>
+    <footer class="statusbar">
+      <label class="cmd-prompt" id="cmd-prompt" for="cmd">Command:</label>
+      <input class="cmd-input" id="cmd" type="text" autocomplete="off" spellcheck="false" aria-label="Command line" />
+      <span id="status" class="status" role="status" aria-live="polite"></span>
+      <button id="status-undo" class="btn status-undo hidden" type="button">Undo</button>
+      <span id="info" class="info"></span>
+    </footer>
+    <div id="cmd-suggest" class="cmd-suggest hidden"></div>
+    <div id="tip" class="tip hidden"></div>
     <div id="modal" class="modal hidden"></div>
     <div id="fabric-test" class="modal hidden">
       <div class="fabric-card">

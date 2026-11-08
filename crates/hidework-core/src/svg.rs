@@ -56,12 +56,13 @@ pub fn to_svg(sheet: &Sheet) -> String {
                     );
                 }
             }
-            Shape::Text { at, size, text, align, bold } => {
+            Shape::Text { at, size, text, align, bold, angle } => {
                 let anchor = if *align == Align::Center { "middle" } else { "start" };
                 let weight = if *bold { "bold" } else { "normal" };
+                let turn = if angle.abs() > 1e-9 { format!(r#" transform="rotate({angle:.3} {:.3} {:.3})""#, at.x, at.y) } else { String::new() };
                 let _ = writeln!(
                     s,
-                    r#"<text x="{:.3}" y="{:.3}" font-family="Helvetica, Arial, sans-serif" font-size="{size}" font-weight="{weight}" text-anchor="{anchor}">{}</text>"#,
+                    r#"<text x="{:.3}" y="{:.3}" font-family="Helvetica, Arial, sans-serif" font-size="{size}" font-weight="{weight}" text-anchor="{anchor}"{turn}>{}</text>"#,
                     at.x,
                     at.y,
                     esc(text)

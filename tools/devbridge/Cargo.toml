@@ -1,0 +1,20 @@
+# Development only: serves the Hidework core over HTTP on 127.0.0.1:1430 so the interface can be
+# previewed in an ordinary browser (`npm run dev`, then open http://localhost:1420). ui/src/devmock.ts
+# forwards Tauri calls here when the page is not running inside the desktop app. Never shipped.
+[package]
+name = "hidework-devbridge"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+hidework-core = { path = "../../crates/hidework-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Not a member of the main workspace.
+[workspace]
+
+[profile.dev]
+opt-level = 2
